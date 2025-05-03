@@ -1,0 +1,31 @@
+{{define "stats"}}
+<div class="card">
+  <h2>Request Statistics</h2>
+  <div class="stats-grid">
+    <div class="stat-box">
+      <div class="stat-value" id="stat-total">0</div>
+      <div class="stat-label">Total Requests</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-success">0</div>
+      <div class="stat-label">Success (2xx)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-redirect">0</div>
+      <div class="stat-label">Redirect (3xx)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-client-error">0</div>
+      <div class="stat-label">Client Error (4xx)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-server-error">0</div>
+      <div class="stat-label">Server Error (5xx)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-avg-time">0 ms</div>
+      <div class="stat-label">Avg Response Time</div>
+    </div>
+  </div>
+</div>
+{{end}}

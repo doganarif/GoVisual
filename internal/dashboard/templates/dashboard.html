@@ -1,0 +1,231 @@
+{{define "title"}}HTTP Request Visualizer{{end}} {{define "content"}} {{template
+"stats" .}} {{template "request-table" .}} {{template "request-details" .}}
+{{end}} {{define "scripts"}}
+<script>
+  // Global variables
+  let allRequests = [];
+  let selectedRequestId = null;
+
+  // Fetch requests initially
+  fetch("/__viz/api/requests")
+    .then((response) => response.json())
+    .then((data) => {
+      allRequests = data;
+      updateTable(data);
+      updateStats(data);
+    })
+    .catch((error) => console.error("Error fetching initial data:", error));
+
+  // Set up SSE for live updates
+  const evtSource = new EventSource("/__viz/api/events");
+  evtSource.onmessage = function (event) {
+    try {
+      const data = JSON.parse(event.data);
+      allRequests = data;
+      updateTable(data);
+      updateStats(data);
+
+      // If details are open, refresh them
+      if (
+        selectedRequestId &&
+        document.getElementById("requestDetails").style.display === "block"
+      ) {
+        const selectedRequest = allRequests.find(
+          (req) => req.ID === selectedRequestId
+        );
+        if (selectedRequest) {
+          showRequestDetails(selectedRequest);
+        }
+      }
+    } catch (error) {
+      console.error("Error parsing SSE data:", error);
+    }
+  };
+
+  // Update the table with the request data
+  function updateTable(requests) {
+    const tbody = document.getElementById("requestsBody");
+    tbody.innerHTML = "";
+
+    if (!requests || requests.length === 0) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.textContent = "No requests logged yet";
+      cell.style.textAlign = "center";
+      row.appendChild(cell);
+      tbody.appendChild(row);
+      return;
+    }
+
+    requests.forEach((req) => {
+      const row = document.createElement("tr");
+      row.setAttribute("data-id", req.ID);
+      row.addEventListener("click", () => {
+        showRequestDetails(req);
+      });
+
+      const timeCell = document.createElement("td");
+      timeCell.textContent = new Date(req.Timestamp).toLocaleTimeString();
+      row.appendChild(timeCell);
+
+      const methodCell = document.createElement("td");
+      methodCell.textContent = req.Method;
+      row.appendChild(methodCell);
+
+      const pathCell = document.createElement("td");
+      pathCell.textContent = req.Path + (req.Query ? "?" + req.Query : "");
+      row.appendChild(pathCell);
+
+      const statusCell = document.createElement("td");
+      statusCell.textContent = req.StatusCode;
+      // Color the status cell based on status code
+      if (req.StatusCode >= 200 && req.StatusCode < 300) {
+        statusCell.style.color = "green";
+      } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
+        statusCell.style.color = "orange";
+      } else if (req.StatusCode >= 500) {
+        statusCell.style.color = "red";
+      }
+      row.appendChild(statusCell);
+
+      const durationCell = document.createElement("td");
+      if (req.Duration !== undefined && req.Duration !== null) {
+        durationCell.textContent = req.Duration + " ms";
+      } else {
+        durationCell.textContent = "N/A";
+      }
+      row.appendChild(durationCell);
+
+      tbody.appendChild(row);
+    });
+  }
+
+  // Update statistics
+  function updateStats(requests) {
+    if (!requests || requests.length === 0) {
+      document.getElementById("stat-total").textContent = "0";
+      document.getElementById("stat-success").textContent = "0";
+      document.getElementById("stat-redirect").textContent = "0";
+      document.getElementById("stat-client-error").textContent = "0";
+      document.getElementById("stat-server-error").textContent = "0";
+      document.getElementById("stat-avg-time").textContent = "0 ms";
+      return;
+    }
+
+    let success = 0;
+    let redirect = 0;
+    let clientError = 0;
+    let serverError = 0;
+    let totalDuration = 0;
+    let validDurationCount = 0;
+
+    requests.forEach((req) => {
+      if (req.StatusCode >= 200 && req.StatusCode < 300) success++;
+      else if (req.StatusCode >= 300 && req.StatusCode < 400) redirect++;
+      else if (req.StatusCode >= 400 && req.StatusCode < 500) clientError++;
+      else if (req.StatusCode >= 500) serverError++;
+
+      if (req.Duration !== undefined && req.Duration !== null) {
+        totalDuration += req.Duration;
+        validDurationCount++;
+      }
+    });
+
+    const avgDuration =
+      validDurationCount > 0
+        ? Math.round(totalDuration / validDurationCount)
+        : 0;
+
+    document.getElementById("stat-total").textContent = requests.length;
+    document.getElementById("stat-success").textContent = success;
+    document.getElementById("stat-redirect").textContent = redirect;
+    document.getElementById("stat-client-error").textContent = clientError;
+    document.getElementById("stat-server-error").textContent = serverError;
+    document.getElementById("stat-avg-time").textContent = avgDuration + " ms";
+  }
+
+  // Show request details
+  function showRequestDetails(req) {
+    selectedRequestId = req.ID;
+
+    document.getElementById("detail-id").textContent = req.ID;
+    document.getElementById("detail-time").textContent = new Date(
+      req.Timestamp
+    ).toLocaleString();
+    document.getElementById("detail-method").textContent = req.Method;
+    document.getElementById("detail-path").textContent =
+      req.Path + (req.Query ? "?" + req.Query : "");
+    document.getElementById("detail-status").textContent = req.StatusCode;
+    document.getElementById("detail-duration").textContent =
+      req.Duration !== undefined && req.Duration !== null
+        ? req.Duration + " ms"
+        : "N/A";
+
+    // Format headers
+    const requestHeaders = formatHeaders(req.RequestHeaders);
+    const responseHeaders = formatHeaders(req.ResponseHeaders);
+
+    document.getElementById("detail-request-headers").textContent =
+      requestHeaders || "No headers available";
+    document.getElementById("detail-response-headers").textContent =
+      responseHeaders || "No headers available";
+
+    // Handle request and response bodies
+    const requestBodyContainer = document.getElementById(
+      "request-body-container"
+    );
+    const responseBodyContainer = document.getElementById(
+      "response-body-container"
+    );
+    const requestBodyElement = document.getElementById("detail-request-body");
+    const responseBodyElement = document.getElementById("detail-response-body");
+
+    if (req.RequestBody) {
+      requestBodyContainer.style.display = "block";
+      requestBodyElement.textContent = formatBody(req.RequestBody);
+    } else {
+      requestBodyContainer.style.display = "none";
+    }
+
+    if (req.ResponseBody) {
+      responseBodyContainer.style.display = "block";
+      responseBodyElement.textContent = formatBody(req.ResponseBody);
+    } else {
+      responseBodyContainer.style.display = "none";
+    }
+
+    // Show the details
+    document.getElementById("requestDetails").style.display = "block";
+  }
+
+  // Format headers for display
+  function formatHeaders(headers) {
+    if (!headers) return "";
+
+    let result = "";
+    for (const key in headers) {
+      result += `${key}: ${headers[key].join(", ")}\n`;
+    }
+    return result;
+  }
+
+  // Format body for display
+  function formatBody(body) {
+    try {
+      // Try to parse and pretty-print JSON
+      const json = JSON.parse(body);
+      return JSON.stringify(json, null, 2);
+    } catch (e) {
+      // If not JSON, return as-is
+      return body;
+    }
+  }
+
+  // Close details
+  document.getElementById("close-details").addEventListener("click", () => {
+    document.getElementById("requestDetails").style.display = "none";
+    selectedRequestId = null;
+  });
+</script>
+{{end}}

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"path"
 	"time"
@@ -12,13 +13,19 @@ import (
 
 // Handler is the HTTP handler for the dashboard
 type Handler struct {
-	store store.Store
+	store    store.Store
+	template *template.Template
 }
 
 // NewHandler creates a new dashboard handler
 func NewHandler(store store.Store) *Handler {
+	// Parse templates from embedded filesystem
+	tmpl := template.Must(template.ParseFS(templateFS, "templates/*.html"))
+	template.Must(tmpl.ParseFS(templateFS, "templates/components/*.html"))
+
 	return &Handler{
-		store: store,
+		store:    store,
+		template: tmpl,
 	}
 }
 
@@ -45,106 +52,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // handleDashboard serves the dashboard HTML
 func (h *Handler) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`
-<!DOCTYPE html>
-<html>
-<head>
-    <title>HTTP Request Visualizer</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-        h1 { color: #333; }
-        #requests { border-collapse: collapse; width: 100%; }
-        #requests th, #requests td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        #requests tr:nth-child(even) { background-color: #f2f2f2; }
-        #requests th { padding-top: 12px; padding-bottom: 12px; background-color: #4CAF50; color: white; }
-    </style>
-</head>
-<body>
-    <h1>HTTP Request Visualizer</h1>
-    <table id="requests">
-        <thead>
-            <tr>
-                <th>Time</th>
-                <th>Method</th>
-                <th>Path</th>
-                <th>Status</th>
-                <th>Duration</th>
-            </tr>
-        </thead>
-        <tbody id="requestsBody">
-            <!-- Will be populated by JavaScript -->
-        </tbody>
-    </table>
 
-    <script>
-        // Fetch requests initially
-        fetch('/__viz/api/requests')
-            .then(response => response.json())
-            .then(data => {
-                updateTable(data);
-            })
-            .catch(error => console.error('Error fetching initial data:', error));
-        
-        // Set up SSE for live updates
-        const evtSource = new EventSource('/__viz/api/events');
-        evtSource.onmessage = function(event) {
-            try {
-                const data = JSON.parse(event.data);
-                updateTable(data);
-            } catch (error) {
-                console.error('Error parsing SSE data:', error);
-            }
-        };
-        
-        function updateTable(requests) {
-            const tbody = document.getElementById('requestsBody');
-            tbody.innerHTML = '';
-            
-            if (!requests || requests.length === 0) {
-                const row = document.createElement('tr');
-                const cell = document.createElement('td');
-                cell.colSpan = 5;
-                cell.textContent = 'No requests logged yet';
-                cell.style.textAlign = 'center';
-                row.appendChild(cell);
-                tbody.appendChild(row);
-                return;
-            }
-            
-            requests.forEach(req => {
-                const row = document.createElement('tr');
-                
-                const timeCell = document.createElement('td');
-                timeCell.textContent = new Date(req.Timestamp).toLocaleTimeString();
-                row.appendChild(timeCell);
-                
-                const methodCell = document.createElement('td');
-                methodCell.textContent = req.Method;
-                row.appendChild(methodCell);
-                
-                const pathCell = document.createElement('td');
-                pathCell.textContent = req.Path + (req.Query ? '?' + req.Query : '');
-                row.appendChild(pathCell);
-                
-                const statusCell = document.createElement('td');
-                statusCell.textContent = req.StatusCode;
-                row.appendChild(statusCell);
-                
-				const durationCell = document.createElement('td');
-				if (req.Duration !== undefined && req.Duration !== null) {
-                    durationCell.textContent = req.Duration + ' ms';
-                } else {
-                    durationCell.textContent = 'N/A';
-                }
-				row.appendChild(durationCell);
-                
-                tbody.appendChild(row);
-            });
-        }
-    </script>
-</body>
-</html>
-	`))
+	// Get the data to pass to the template
+	data := map[string]interface{}{
+		"Requests": h.store.GetAll(),
+	}
+
+	// Execute the dashboard template
+	err := h.template.ExecuteTemplate(w, "layout.html", data)
+	if err != nil {
+		http.Error(w, "Error rendering template: "+err.Error(), http.StatusInternalServerError)
+	}
 }
 
 // handleAPIRequests serves the JSON API for requests

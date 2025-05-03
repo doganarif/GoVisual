@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>{{template "title" .}}</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f8f9fa;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 15px;
+      }
+      .card {
+        background-color: #fff;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      h1,
+      h2 {
+        color: #333;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+      }
+      tr:nth-child(even) {
+        background-color: #f2f2f2;
+      }
+      tr:hover {
+        background-color: #e9e9e9;
+        cursor: pointer;
+      }
+      th {
+        padding-top: 12px;
+        padding-bottom: 12px;
+        background-color: #4caf50;
+        color: white;
+      }
+      pre {
+        background-color: #f8f8f8;
+        border: 1px solid #ddd;
+        padding: 10px;
+        border-radius: 3px;
+        overflow-x: auto;
+      }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+      }
+      .stat-box {
+        background-color: #f8f8f8;
+        border-radius: 4px;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
+      .stat-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #4caf50;
+        margin-bottom: 5px;
+      }
+      .stat-label {
+        color: #666;
+        font-size: 14px;
+      }
+      .detail-row {
+        margin-bottom: 10px;
+      }
+      .btn {
+        background-color: #4caf50;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        margin: 4px 2px;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+    </style>
+    {{block "head" .}}{{end}}
+  </head>
+  <body>
+    <div class="container">
+      {{template "header" .}} {{template "content" .}}
+    </div>
+
+    {{block "scripts" .}}{{end}}
+  </body>
+</html>
