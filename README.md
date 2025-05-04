@@ -2,6 +2,8 @@
 
 A lightweight, zero-configuration HTTP request visualizer and debugger for Go web applications during local development.
 
+[![Star History Chart](https://api.star-history.com/svg?repos=doganarif/GoVisual&type=Date)](https://www.star-history.com/#doganarif/GoVisual&Date)
+
 ## Features
 
 - **Real-time Request Monitoring**: Visualize HTTP requests passing through your application
