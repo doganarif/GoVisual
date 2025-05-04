@@ -1,8 +1,9 @@
 package store
 
 import (
-	"github.com/doganarif/govisual/internal/model"
 	"sync"
+
+	"github.com/doganarif/govisual/internal/model"
 )
 
 type InMemoryStore struct {
@@ -83,4 +84,10 @@ func (s *InMemoryStore) GetLatest(n int) []*model.RequestLog {
 	}
 
 	return all[len(all)-n:]
+}
+
+// Close implements the Store interface but does nothing for in-memory store
+func (s *InMemoryStore) Close() error {
+	// Nothing to do for in-memory store
+	return nil
 }

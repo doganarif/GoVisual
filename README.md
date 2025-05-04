@@ -45,6 +45,10 @@ func main() {
 
 Access the dashboard at `http://localhost:8080/__viz`
 
+## Documentation
+
+For detailed documentation, please refer to the [DOCS](docs/README.md).
+
 ## Configuration Options
 
 ```go
@@ -59,6 +63,60 @@ handler := govisual.Wrap(
     govisual.WithServiceName("my-service"),     // Service name for OTel
     govisual.WithServiceVersion("1.0.0"),       // Service version
     govisual.WithOTelEndpoint("localhost:4317"), // OTLP endpoint
+
+    // Storage options (choose one)
+    govisual.WithMemoryStorage(),                // In-memory storage (default)
+    govisual.WithPostgresStorage(               // PostgreSQL storage
+        "postgres://user:password@localhost:5432/database?sslmode=disable",
+        "govisual_requests"                     // Table name
+    ),
+    govisual.WithRedisStorage(                  // Redis storage
+        "redis://localhost:6379/0",             // Redis connection string
+        86400                                   // TTL in seconds (24 hours)
+    ),
+)
+```
+
+## Storage Backends
+
+GoVisual supports multiple storage backends for storing request logs:
+
+### In-Memory Storage (Default)
+
+The default storage keeps all request logs in memory. This is the simplest option but logs will be lost when the application restarts.
+
+```go
+handler := govisual.Wrap(
+    mux,
+    govisual.WithMemoryStorage(), // Optional, this is the default
+)
+```
+
+### PostgreSQL Storage
+
+For persistent storage, you can use PostgreSQL. This requires the `github.com/lib/pq` package.
+
+```go
+handler := govisual.Wrap(
+    mux,
+    govisual.WithPostgresStorage(
+        "postgres://user:password@localhost:5432/dbname?sslmode=disable", // Connection string
+        "govisual_requests"  // Table name (created automatically if it doesn't exist)
+    ),
+)
+```
+
+### Redis Storage
+
+For high-performance storage with automatic expiration, you can use Redis. This requires the `github.com/go-redis/redis/v8` package.
+
+```go
+handler := govisual.Wrap(
+    mux,
+    govisual.WithRedisStorage(
+        "redis://localhost:6379/0", // Redis connection string
+        86400                       // TTL in seconds (24 hours)
+    ),
 )
 ```
 
@@ -83,7 +141,18 @@ docker-compose up -d  # Start Jaeger
 go run main.go
 ```
 
-Visit [OpenTelemetry Integration](docs/opentelemetry.md) for detailed instructions.
+### Multi-Storage Example
+
+Example showing different storage backends:
+
+```bash
+cd cmd/examples/multistorage
+docker-compose up -d  # Start PostgreSQL and Redis
+```
+
+Modify the environment variables in `docker-compose.yml` to switch between storage backends.
+
+Visit [Multi-Storage Example](cmd/examples/multistorage/README.md) for detailed instructions.
 
 ## Dashboard Features
 
