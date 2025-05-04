@@ -15,6 +15,15 @@ type Config struct {
 	LogResponseBody bool
 
 	IgnorePaths []string
+
+	// OpenTelemetry configuration
+	EnableOpenTelemetry bool
+
+	ServiceName string
+
+	ServiceVersion string
+
+	OTelEndpoint string
 }
 
 // Option is a function that modifies the configuration
@@ -55,6 +64,34 @@ func WithIgnorePaths(patterns ...string) Option {
 	}
 }
 
+// WithOpenTelemetry enables or disables OpenTelemetry instrumentation
+func WithOpenTelemetry(enabled bool) Option {
+	return func(c *Config) {
+		c.EnableOpenTelemetry = enabled
+	}
+}
+
+// WithServiceName sets the service name for OpenTelemetry
+func WithServiceName(name string) Option {
+	return func(c *Config) {
+		c.ServiceName = name
+	}
+}
+
+// WithServiceVersion sets the service version for OpenTelemetry
+func WithServiceVersion(version string) Option {
+	return func(c *Config) {
+		c.ServiceVersion = version
+	}
+}
+
+// WithOTelEndpoint sets the OTLP endpoint for exporting telemetry data
+func WithOTelEndpoint(endpoint string) Option {
+	return func(c *Config) {
+		c.OTelEndpoint = endpoint
+	}
+}
+
 // ShouldIgnorePath checks if a path should be ignored based on the configured patterns
 // ShouldIgnorePath checks if a path should be ignored based on the configured patterns
 func (c *Config) ShouldIgnorePath(path string) bool {
@@ -85,10 +122,14 @@ func (c *Config) ShouldIgnorePath(path string) bool {
 // defaultConfig returns the default configuration
 func defaultConfig() *Config {
 	return &Config{
-		MaxRequests:     100,
-		DashboardPath:   "/__viz",
-		LogRequestBody:  false,
-		LogResponseBody: false,
-		IgnorePaths:     []string{},
+		MaxRequests:         100,
+		DashboardPath:       "/__viz",
+		LogRequestBody:      false,
+		LogResponseBody:     false,
+		IgnorePaths:         []string{},
+		EnableOpenTelemetry: false,
+		ServiceName:         "govisual",
+		ServiceVersion:      "dev",
+		OTelEndpoint:        "localhost:4317",
 	}
 }
