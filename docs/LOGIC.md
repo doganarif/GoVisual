@@ -1,10 +1,40 @@
-flowchart TD
-subgraph "Developer Workflow"
-A1[Run Local App with GoVisual] --> A2["Open Browser: localhost:8080/__viz"]
-A2 --> A3[Monitor Requests in Dashboard]
-A3 --> A4[Debug Issues & Optimize App]
-end
+# GoVisual: Core Logic
 
+This document outlines the core logic and architecture of GoVisual, a request visualization tool for Go HTTP applications.
+
+## Overview
+
+GoVisual is designed to be a lightweight, non-intrusive tool that wraps your existing HTTP handlers to provide visibility into request processing. The fundamental design principles include:
+
+1. **Middleware Architecture**: GoVisual uses the HTTP middleware pattern to intercept requests before and after your handler processes them
+2. **In-Memory Storage**: All request data is stored in a circular buffer with configurable size
+3. **Contextual Enrichment**: The middleware captures detailed execution metrics including timing data
+4. **Dashboard Rendering**: A self-contained HTML dashboard for visualizing captured requests
+5. **Zero External Dependencies**: No third-party packages required beyond the Go standard library
+
+## Request Flow
+
+When a request is processed through GoVisual:
+
+1. The request is intercepted by the GoVisual middleware
+2. Request metadata (headers, path, method, body) is captured
+3. The original handler is called to process the request
+4. Response metadata (status code, headers, body, timing) is captured
+5. Both are stored in the in-memory circular buffer
+6. The dashboard path (`/__viz` by default) is intercepted to serve the visualization UI
+
+## Core Components
+
+The diagram below illustrates the relationship between core components:
+
+```mermaid
+flowchart TD
+    subgraph "Developer Workflow"
+        A1[Run Local App with GoVisual] --> A2["Open Browser: localhost:8080/__viz"]
+        A2 --> A3[Monitor Requests in Dashboard]
+        A3 --> A4[Debug Issues & Optimize App]
+    end
+    
     subgraph "HTTP Request Flow"
         B1[Local API Request] --> B2[govisual.Wrap]
         B2 --> B3{Is Dashboard Path?}
@@ -49,3 +79,125 @@ end
     D3 --> C5
     D7 --> C6
     E2 --> A1
+```
+
+## Technical Architecture
+
+The following class diagram shows the relationships between key components:
+
+```mermaid
+classDiagram
+    class Config {
+        +int MaxRequests
+        +string DashboardPath
+        +bool LogRequestBody
+        +bool LogResponseBody
+        +string[] IgnorePaths
+        +ShouldIgnorePath(path string) bool
+    }
+    
+    class Wrap {
+        +Wrap(handler http.Handler, opts) http.Handler
+    }
+    
+    class Option {
+        +func(c *Config)
+    }
+    
+    class RequestLog {
+        +string ID
+        +time.Time Timestamp
+        +string Method
+        +string Path
+        +string Query
+        +http.Header RequestHeaders
+        +http.Header ResponseHeaders
+        +int StatusCode
+        +int64 Duration
+        +string RequestBody
+        +string ResponseBody
+        +string Error
+        +object MiddlewareTrace
+        +object RouteTrace
+    }
+    
+    class Store {
+        +Add(log *RequestLog)
+        +Get(id string)
+        +GetAll()
+        +GetLatest(n int)
+    }
+    
+    class InMemoryStore {
+        -logs
+        -int capacity
+        -int size
+        -int next
+        -mutex mu
+        +Add(log *RequestLog)
+        +Get(id string)
+        +GetAll()
+        +GetLatest(n int)
+    }
+    
+    class Handler {
+        -Store store
+        -template
+        +ServeHTTP(w, r)
+        -handleDashboard(w, r)
+        -handleAPIRequests(w, r)
+        -handleClearRequests(w, r)
+        -handleSSE(w, r)
+    }
+    
+    class Middleware {
+        +Wrap(handler, store, logRequest, logResponse, matcher)
+    }
+    
+    class PathMatcher {
+        +ShouldIgnorePath(path string) bool
+    }
+    
+    Config ..|> PathMatcher
+    Wrap --> Config
+    Option --> Config
+    InMemoryStore ..|> Store
+    Middleware --> Store
+    Middleware --> PathMatcher
+    Handler --> Store
+    Wrap --> Handler
+    Wrap --> Middleware
+    Middleware --> RequestLog
+```
+
+## Implementation Details
+
+### Configuration Options
+
+GoVisual can be configured with various options:
+
+- **MaxRequests**: Maximum number of requests to store in memory (default: 100)
+- **DashboardPath**: Path to access the dashboard (default: "/__viz")
+- **LogRequestBody**: Enable request body logging (default: false)
+- **LogResponseBody**: Enable response body logging (default: false)
+- **IgnorePaths**: Paths to ignore (default: empty)
+
+### Circular Buffer Implementation
+
+The in-memory storage uses a circular buffer implementation for efficient memory usage:
+
+1. A fixed-size array holds request logs
+2. New logs replace old ones when the buffer is full
+3. A pointer tracks the next insertion position
+4. A size counter tracks the number of valid entries
+
+This ensures memory usage remains constant regardless of request volume.
+
+### Dashboard Implementation
+
+The dashboard is implemented using embedded HTML templates, CSS, and JavaScript, with no external dependencies:
+
+1. HTML templates are embedded using Go's `embed` package
+2. Server-Sent Events (SSE) provide real-time updates
+3. Client-side filtering and sorting minimize server load
+4. Data is fetched via simple REST endpoints
