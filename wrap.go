@@ -1,11 +1,18 @@
 package govisual
 
 import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
 	"github.com/doganarif/govisual/internal/dashboard"
 	"github.com/doganarif/govisual/internal/middleware"
 	"github.com/doganarif/govisual/internal/store"
-	"net/http"
-	"strings"
+	"github.com/doganarif/govisual/internal/telemetry"
 )
 
 // Wrap wraps an http.Handler with request visualization middleware
@@ -21,6 +28,32 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 
 	// Create middleware wrapper
 	wrapped := middleware.Wrap(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config)
+
+	// Initialize OpenTelemetry if enabled
+	var shutdown func(context.Context) error
+	if config.EnableOpenTelemetry {
+		ctx := context.Background()
+		var err error
+		shutdown, err = telemetry.InitTracer(ctx, config.ServiceName, config.ServiceVersion, config.OTelEndpoint)
+		if err != nil {
+			log.Printf("Failed to initialize OpenTelemetry: %v", err)
+		} else {
+			log.Printf("OpenTelemetry initialized with service name: %s, endpoint: %s", config.ServiceName, config.OTelEndpoint)
+
+			// Set up graceful shutdown for OpenTelemetry
+			go func() {
+				signals := make(chan os.Signal, 1)
+				signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+				<-signals
+				if err := shutdown(context.Background()); err != nil {
+					log.Printf("Error shutting down OpenTelemetry: %v", err)
+				}
+			}()
+
+			// Wrap with OpenTelemetry middleware
+			wrapped = middleware.NewOTelMiddleware(wrapped, config.ServiceName, config.ServiceVersion)
+		}
+	}
 
 	// Create dashboard handler
 	dashHandler := dashboard.NewHandler(requestStore)

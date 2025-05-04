@@ -11,6 +11,7 @@ GoVisual is designed to be a lightweight, non-intrusive tool that wraps your exi
 3. **Contextual Enrichment**: The middleware captures detailed execution metrics including timing data
 4. **Dashboard Rendering**: A self-contained HTML dashboard for visualizing captured requests
 5. **Zero External Dependencies**: No third-party packages required beyond the Go standard library
+6. **OpenTelemetry Integration**: Optional integration with OpenTelemetry for distributed tracing
 
 ## Request Flow
 
@@ -22,6 +23,7 @@ When a request is processed through GoVisual:
 4. Response metadata (status code, headers, body, timing) is captured
 5. Both are stored in the in-memory circular buffer
 6. The dashboard path (`/__viz` by default) is intercepted to serve the visualization UI
+7. If OpenTelemetry is enabled, a trace is created and exported to the configured endpoint
 
 ## Core Components
 
@@ -34,7 +36,7 @@ flowchart TD
         A2 --> A3[Monitor Requests in Dashboard]
         A3 --> A4[Debug Issues & Optimize App]
     end
-    
+
     subgraph "HTTP Request Flow"
         B1[Local API Request] --> B2[govisual.Wrap]
         B2 --> B3{Is Dashboard Path?}
@@ -43,7 +45,7 @@ flowchart TD
         B5 --> B6[Forward to App Handler]
         B6 --> B7[Return to User]
     end
-    
+
     subgraph "Visualization & Debug Features"
         C1[Real-time Request Table] --> C2[Filter & Search]
         C1 --> C3[Detailed Request View]
@@ -54,7 +56,7 @@ flowchart TD
         C1 --> C8[Middleware Trace Visualization]
         C8 --> C9[Performance Bottleneck Detection]
     end
-    
+
     subgraph "Data Capture System"
         D1[Intercept HTTP Request] --> D2[Capture Headers]
         D1 --> D3[Capture Request Body]
@@ -64,7 +66,7 @@ flowchart TD
         D5 --> D8[Calculate Duration]
         D9[Track Middleware Flow] --> D10[Record Execution Times]
     end
-    
+
     subgraph "Development Configuration"
         E1[Feature Flags] --> E2[Enable in Dev Only]
         E1 --> E3[Disable in Production]
@@ -72,13 +74,21 @@ flowchart TD
         E4 --> E6[Response Body Capture]
         E7[Storage Options] --> E8[Memory Limits]
     end
-    
+
+    subgraph "OpenTelemetry Integration"
+        F1[Initialize OTel] --> F2[Create Traces]
+        F2 --> F3[Add HTTP Attributes]
+        F3 --> F4[Export to Backend]
+        F4 --> F5[View in Jaeger/Other UI]
+    end
+
     B7 --> A3
     D10 --> C8
     D8 --> C7
     D3 --> C5
     D7 --> C6
     E2 --> A1
+    B5 --> F2
 ```
 
 ## Technical Architecture
@@ -93,17 +103,21 @@ classDiagram
         +bool LogRequestBody
         +bool LogResponseBody
         +string[] IgnorePaths
+        +bool EnableOpenTelemetry
+        +string ServiceName
+        +string ServiceVersion
+        +string OTelEndpoint
         +ShouldIgnorePath(path string) bool
     }
-    
+
     class Wrap {
         +Wrap(handler http.Handler, opts) http.Handler
     }
-    
+
     class Option {
         +func(c *Config)
     }
-    
+
     class RequestLog {
         +string ID
         +time.Time Timestamp
@@ -120,14 +134,14 @@ classDiagram
         +object MiddlewareTrace
         +object RouteTrace
     }
-    
+
     class Store {
         +Add(log *RequestLog)
         +Get(id string)
         +GetAll()
         +GetLatest(n int)
     }
-    
+
     class InMemoryStore {
         -logs
         -int capacity
@@ -139,7 +153,7 @@ classDiagram
         +GetAll()
         +GetLatest(n int)
     }
-    
+
     class Handler {
         -Store store
         -template
@@ -149,15 +163,27 @@ classDiagram
         -handleClearRequests(w, r)
         -handleSSE(w, r)
     }
-    
+
     class Middleware {
         +Wrap(handler, store, logRequest, logResponse, matcher)
     }
-    
+
     class PathMatcher {
         +ShouldIgnorePath(path string) bool
     }
-    
+
+    class OTelMiddleware {
+        +tracer trace.Tracer
+        +propagator propagation.TextMapPropagator
+        +handler http.Handler
+        +serviceVersion string
+        +ServeHTTP(w, r)
+    }
+
+    class TelemetryInit {
+        +InitTracer(ctx, serviceName, serviceVersion, endpoint)
+    }
+
     Config ..|> PathMatcher
     Wrap --> Config
     Option --> Config
@@ -168,6 +194,9 @@ classDiagram
     Wrap --> Handler
     Wrap --> Middleware
     Middleware --> RequestLog
+    Config --> OTelMiddleware
+    Config --> TelemetryInit
+    Wrap --> OTelMiddleware
 ```
 
 ## Implementation Details
@@ -177,10 +206,14 @@ classDiagram
 GoVisual can be configured with various options:
 
 - **MaxRequests**: Maximum number of requests to store in memory (default: 100)
-- **DashboardPath**: Path to access the dashboard (default: "/__viz")
+- **DashboardPath**: Path to access the dashboard (default: "/\_\_viz")
 - **LogRequestBody**: Enable request body logging (default: false)
 - **LogResponseBody**: Enable response body logging (default: false)
 - **IgnorePaths**: Paths to ignore (default: empty)
+- **EnableOpenTelemetry**: Enable OpenTelemetry integration (default: false)
+- **ServiceName**: Service name for OpenTelemetry (default: "govisual")
+- **ServiceVersion**: Service version for OpenTelemetry (default: "dev")
+- **OTelEndpoint**: OTLP exporter endpoint (default: "localhost:4317")
 
 ### Circular Buffer Implementation
 
@@ -201,3 +234,15 @@ The dashboard is implemented using embedded HTML templates, CSS, and JavaScript,
 2. Server-Sent Events (SSE) provide real-time updates
 3. Client-side filtering and sorting minimize server load
 4. Data is fetched via simple REST endpoints
+
+### OpenTelemetry Integration
+
+When enabled, GoVisual integrates with OpenTelemetry to provide distributed tracing:
+
+1. Initialize a tracer provider and exporter on startup
+2. Create a middleware to wrap HTTP handlers and create spans
+3. Add relevant HTTP attributes to spans (method, path, status, etc.)
+4. Export traces to the configured endpoint (typically Jaeger or OpenTelemetry Collector)
+5. Provide context propagation for distributed tracing
+
+The integration is designed to be optional and non-intrusive, allowing users to benefit from both GoVisual's dashboard and OpenTelemetry's ecosystem.
