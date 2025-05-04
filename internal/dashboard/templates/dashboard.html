@@ -1,9 +1,10 @@
-{{define "title"}}HTTP Request Visualizer{{end}} {{define "content"}} {{template
-"stats" .}} {{template "request-table" .}} {{template "request-details" .}}
+{{define "title"}}HTTP Request Visualizer{{end}} {{define "content"}}
+<!-- All content is now managed by the layout with sections -->
 {{end}} {{define "scripts"}}
 <script>
   // Global variables
   let allRequests = [];
+  let filteredRequests = [];
   let selectedRequestId = null;
 
   // Fetch requests initially
@@ -11,8 +12,9 @@
     .then((response) => response.json())
     .then((data) => {
       allRequests = data;
-      updateTable(data);
-      updateStats(data);
+      filteredRequests = [...allRequests];
+      updateTable(filteredRequests);
+      updateStats(filteredRequests);
     })
     .catch((error) => console.error("Error fetching initial data:", error));
 
@@ -22,8 +24,9 @@
     try {
       const data = JSON.parse(event.data);
       allRequests = data;
-      updateTable(data);
-      updateStats(data);
+      applyFilters(); // This will update filteredRequests
+      updateTable(filteredRequests);
+      updateStats(filteredRequests);
 
       // If details are open, refresh them
       if (
@@ -37,10 +40,54 @@
           showRequestDetails(selectedRequest);
         }
       }
+
+      // Update memory usage
+      updateMemoryUsage();
     } catch (error) {
       console.error("Error parsing SSE data:", error);
     }
   };
+
+  // Apply filters to the requests
+  function applyFilters() {
+    const methodFilter = document.getElementById("method-filter").value;
+    const statusFilter = document.getElementById("status-filter").value;
+    const pathFilter = document
+      .getElementById("path-filter")
+      .value.toLowerCase();
+    const durationFilter = document.getElementById("duration-filter").value;
+
+    filteredRequests = allRequests.filter((req) => {
+      // Method filter
+      if (methodFilter && req.Method !== methodFilter) {
+        return false;
+      }
+
+      // Status code filter
+      if (statusFilter) {
+        const firstDigit = Math.floor(req.StatusCode / 100);
+        if (statusFilter === "2xx" && firstDigit !== 2) return false;
+        if (statusFilter === "3xx" && firstDigit !== 3) return false;
+        if (statusFilter === "4xx" && firstDigit !== 4) return false;
+        if (statusFilter === "5xx" && firstDigit !== 5) return false;
+      }
+
+      // Path filter
+      if (pathFilter && !req.Path.toLowerCase().includes(pathFilter)) {
+        return false;
+      }
+
+      // Duration filter
+      if (
+        durationFilter &&
+        (!req.Duration || req.Duration < parseInt(durationFilter))
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }
 
   // Update the table with the request data
   function updateTable(requests) {
@@ -58,11 +105,19 @@
       return;
     }
 
-    requests.forEach((req) => {
+    // Sort requests by timestamp, newest first
+    const sortedRequests = [...requests].sort(
+      (a, b) => new Date(b.Timestamp) - new Date(a.Timestamp)
+    );
+
+    sortedRequests.forEach((req) => {
       const row = document.createElement("tr");
       row.setAttribute("data-id", req.ID);
       row.addEventListener("click", () => {
+        // Navigate to request details section and show details
+        document.querySelector('[data-target="requests-section"]').click();
         showRequestDetails(req);
+        showRequestTrace(req);
       });
 
       const timeCell = document.createElement("td");
@@ -71,6 +126,8 @@
 
       const methodCell = document.createElement("td");
       methodCell.textContent = req.Method;
+      // Add CSS class based on method
+      methodCell.className = "method-" + req.Method.toLowerCase();
       row.appendChild(methodCell);
 
       const pathCell = document.createElement("td");
@@ -79,19 +136,27 @@
 
       const statusCell = document.createElement("td");
       statusCell.textContent = req.StatusCode;
-      // Color the status cell based on status code
+      // Add CSS class based on status code
       if (req.StatusCode >= 200 && req.StatusCode < 300) {
-        statusCell.style.color = "green";
+        statusCell.className = "status-success";
+      } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
+        statusCell.className = "status-redirect";
       } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
-        statusCell.style.color = "orange";
+        statusCell.className = "status-client-error";
       } else if (req.StatusCode >= 500) {
-        statusCell.style.color = "red";
+        statusCell.className = "status-server-error";
       }
       row.appendChild(statusCell);
 
       const durationCell = document.createElement("td");
       if (req.Duration !== undefined && req.Duration !== null) {
         durationCell.textContent = req.Duration + " ms";
+        // Highlight slow requests
+        if (req.Duration > 500) {
+          durationCell.className = "status-server-error";
+        } else if (req.Duration > 200) {
+          durationCell.className = "status-client-error";
+        }
       } else {
         durationCell.textContent = "N/A";
       }
@@ -110,6 +175,9 @@
       document.getElementById("stat-client-error").textContent = "0";
       document.getElementById("stat-server-error").textContent = "0";
       document.getElementById("stat-avg-time").textContent = "0 ms";
+
+      // Update sidebar stats
+      updateSidebarStats(0, 0, 0);
       return;
     }
 
@@ -137,12 +205,18 @@
         ? Math.round(totalDuration / validDurationCount)
         : 0;
 
+    const successRate =
+      requests.length > 0 ? Math.round((success / requests.length) * 100) : 0;
+
     document.getElementById("stat-total").textContent = requests.length;
     document.getElementById("stat-success").textContent = success;
     document.getElementById("stat-redirect").textContent = redirect;
     document.getElementById("stat-client-error").textContent = clientError;
     document.getElementById("stat-server-error").textContent = serverError;
     document.getElementById("stat-avg-time").textContent = avgDuration + " ms";
+
+    // Update sidebar stats
+    updateSidebarStats(requests.length, successRate, avgDuration);
   }
 
   // Show request details
@@ -199,6 +273,54 @@
     document.getElementById("requestDetails").style.display = "block";
   }
 
+  // Show request trace
+  function showRequestTrace(req) {
+    const traceContainer = document.getElementById("traceContainer");
+    traceContainer.style.display = "block";
+
+    // Update the trace timing information
+    document.getElementById("trace-total-time").textContent = req.Duration
+      ? req.Duration + " ms"
+      : "N/A";
+
+    // These values would be populated if we had more detailed timing data
+    // For now we'll add placeholder values that are a portion of the total duration
+    const duration = req.Duration || 0;
+    document.getElementById("trace-ttfb").textContent =
+      Math.round(duration * 0.2) + " ms";
+    document.getElementById("trace-network-time").textContent =
+      Math.round(duration * 0.1) + " ms";
+    document.getElementById("trace-processing-time").textContent =
+      Math.round(duration * 0.7) + " ms";
+
+    // Populate timeline (would need more detailed timing data)
+    const timelineContent = document.getElementById("timeline-content");
+    timelineContent.innerHTML = "";
+
+    // Example phases - in a real implementation, this would come from detailed tracing
+    const phases = [
+      { name: "Connection", duration: Math.round(duration * 0.05) },
+      { name: "Request Processing", duration: Math.round(duration * 0.15) },
+      { name: "Handler Execution", duration: Math.round(duration * 0.7) },
+      { name: "Response Generation", duration: Math.round(duration * 0.1) },
+    ];
+
+    phases.forEach((phase) => {
+      const timelineItem = document.createElement("div");
+      timelineItem.className = "timeline-item";
+
+      const phaseName = document.createElement("div");
+      phaseName.textContent = phase.name;
+
+      const phaseDuration = document.createElement("div");
+      phaseDuration.textContent = phase.duration + " ms";
+
+      timelineItem.appendChild(phaseName);
+      timelineItem.appendChild(phaseDuration);
+      timelineContent.appendChild(timelineItem);
+    });
+  }
+
   // Format headers for display
   function formatHeaders(headers) {
     if (!headers) return "";
@@ -222,10 +344,96 @@
     }
   }
 
+  // Update memory usage (simulated for now)
+  function updateMemoryUsage() {
+    // In a real implementation, this would get data from the server
+    const usedMemory = Math.random() * 2000; // Simulated memory usage (MB)
+    const totalMemory = 8192; // Simulated total memory (MB)
+    const percentage = (usedMemory / totalMemory) * 100;
+
+    document.getElementById("memory-used").style.width = percentage + "%";
+    document.getElementById("memory-used-value").textContent =
+      Math.round(usedMemory) + " MB";
+    document.getElementById("memory-total").textContent =
+      Math.round(totalMemory) + " MB";
+  }
+
+  // Toggle collapse function for collapsible sections
+  function toggleCollapse(element) {
+    const card = element.closest(".collapsible");
+    card.classList.toggle("collapsed");
+
+    const icon = element.querySelector(".collapse-icon");
+    if (card.classList.contains("collapsed")) {
+      icon.textContent = "▲";
+    } else {
+      icon.textContent = "▼";
+    }
+  }
+
   // Close details
   document.getElementById("close-details").addEventListener("click", () => {
     document.getElementById("requestDetails").style.display = "none";
+    document.getElementById("traceContainer").style.display = "none";
     selectedRequestId = null;
+
+    // Return to dashboard section
+    document.querySelector('[data-target="dashboard-section"]').click();
   });
+
+  // Clear all requests function
+  function clearAllRequests() {
+    if (confirm("Are you sure you want to clear all requests?")) {
+      // In a real implementation, this would call an API endpoint to clear the requests
+      fetch("/__viz/api/clear", {
+        method: "POST",
+      })
+        .then((response) => {
+          if (response.ok) {
+            // Clear local data
+            allRequests = [];
+            filteredRequests = [];
+            updateTable(filteredRequests);
+            updateStats(filteredRequests);
+
+            // Hide details if open
+            document.getElementById("requestDetails").style.display = "none";
+            document.getElementById("traceContainer").style.display = "none";
+            selectedRequestId = null;
+          }
+        })
+        .catch((error) => console.error("Error clearing requests:", error));
+    }
+  }
+
+  // Set up filter actions
+  document.getElementById("apply-filters").addEventListener("click", () => {
+    applyFilters();
+    updateTable(filteredRequests);
+    updateStats(filteredRequests);
+  });
+
+  document.getElementById("reset-filters").addEventListener("click", () => {
+    // Reset filter inputs
+    document.getElementById("method-filter").value = "";
+    document.getElementById("status-filter").value = "";
+    document.getElementById("path-filter").value = "";
+    document.getElementById("duration-filter").value = "";
+
+    // Reset filtered data
+    filteredRequests = [...allRequests];
+    updateTable(filteredRequests);
+    updateStats(filteredRequests);
+  });
+
+  document
+    .getElementById("clear-requests")
+    .addEventListener("click", clearAllRequests);
+
+  // Initial memory usage update
+  updateMemoryUsage();
+
+  // Set up periodic memory usage updates
+  setInterval(updateMemoryUsage, 5000);
 </script>
 {{end}}

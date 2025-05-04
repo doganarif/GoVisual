@@ -1,0 +1,47 @@
+{{define "sidebar"}}
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h1 class="sidebar-title">GoVisual</h1>
+    <div class="sidebar-subtitle">HTTP Request Visualizer</div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <ul>
+      <li class="nav-item active" data-target="dashboard-section">
+        <span class="nav-icon">📊</span>
+        <span>Dashboard</span>
+      </li>
+      <li class="nav-item" data-target="requests-section">
+        <span class="nav-icon">🔍</span>
+        <span>Requests</span>
+      </li>
+      <li class="nav-item" data-target="env-section">
+        <span class="nav-icon">⚙️</span>
+        <span>Environment</span>
+      </li>
+    </ul>
+  </nav>
+
+  <div class="sidebar-stats">
+    <div class="quick-stat">
+      <div class="quick-stat-label">Total Requests</div>
+      <div class="quick-stat-value" id="sidebar-total-requests">0</div>
+    </div>
+    <div class="quick-stat">
+      <div class="quick-stat-label">Success Rate</div>
+      <div class="quick-stat-value" id="sidebar-success-rate">0%</div>
+    </div>
+    <div class="quick-stat">
+      <div class="quick-stat-label">Avg Response</div>
+      <div class="quick-stat-value" id="sidebar-avg-time">0 ms</div>
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    <button id="sidebar-clear-btn" class="sidebar-btn">
+      <span class="btn-icon">🗑️</span> Clear All
+    </button>
+    <span class="sidebar-version">v1.0.0</span>
+  </div>
+</aside>
+{{end}}

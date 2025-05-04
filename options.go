@@ -1,6 +1,9 @@
 package govisual
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"strings"
+)
 
 type Config struct {
 	MaxRequests int
@@ -53,10 +56,10 @@ func WithIgnorePaths(patterns ...string) Option {
 }
 
 // ShouldIgnorePath checks if a path should be ignored based on the configured patterns
+// ShouldIgnorePath checks if a path should be ignored based on the configured patterns
 func (c *Config) ShouldIgnorePath(path string) bool {
-	// First check if it's the dashboard path which should always be ignored
-	if path == c.DashboardPath || path == c.DashboardPath+"/" ||
-		path == c.DashboardPath+"/api/requests" || path == c.DashboardPath+"/api/events" {
+	// First check if it's the dashboard path which should always be ignored to prevent recursive logging
+	if path == c.DashboardPath || strings.HasPrefix(path, c.DashboardPath+"/") {
 		return true
 	}
 
@@ -68,7 +71,7 @@ func (c *Config) ShouldIgnorePath(path string) bool {
 		}
 
 		// Special handling for path groups with trailing slash
-		if pattern[len(pattern)-1] == '/' {
+		if len(pattern) > 0 && pattern[len(pattern)-1] == '/' {
 			// If pattern ends with /, check if path starts with pattern
 			if len(path) >= len(pattern) && path[:len(pattern)] == pattern {
 				return true

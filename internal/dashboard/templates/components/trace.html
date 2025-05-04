@@ -1,0 +1,47 @@
+{{define "trace"}}
+<div id="traceContainer" class="card" style="display: none">
+  <h2>Request Trace</h2>
+  <div class="trace-timeline">
+    <div class="timeline-header">
+      <div>Phase</div>
+      <div>Duration</div>
+    </div>
+    <div id="timeline-content">
+      <!-- Will be populated by JavaScript -->
+    </div>
+  </div>
+
+  <div class="trace-breakdown">
+    <div class="breakdown-item">
+      <div class="breakdown-label">Total Request Time:</div>
+      <div id="trace-total-time" class="breakdown-value">0 ms</div>
+    </div>
+    <div class="breakdown-item">
+      <div class="breakdown-label">Time to First Byte:</div>
+      <div id="trace-ttfb" class="breakdown-value">0 ms</div>
+    </div>
+    <div class="breakdown-item">
+      <div class="breakdown-label">Network Time:</div>
+      <div id="trace-network-time" class="breakdown-value">0 ms</div>
+    </div>
+    <div class="breakdown-item">
+      <div class="breakdown-label">Processing Time:</div>
+      <div id="trace-processing-time" class="breakdown-value">0 ms</div>
+    </div>
+  </div>
+
+  <div id="trace-route-match" class="trace-section">
+    <h3>Route Matching</h3>
+    <div id="trace-route-details" class="trace-details">
+      <div class="trace-detail-item">No route details available</div>
+    </div>
+  </div>
+
+  <div id="trace-middleware" class="trace-section">
+    <h3>Middleware Execution</h3>
+    <div id="trace-middleware-list" class="trace-details">
+      <div class="trace-detail-item">No middleware traces available</div>
+    </div>
+  </div>
+</div>
+{{end}}
