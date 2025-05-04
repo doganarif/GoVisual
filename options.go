@@ -3,6 +3,8 @@ package govisual
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/doganarif/govisual/internal/store"
 )
 
 type Config struct {
@@ -24,6 +26,18 @@ type Config struct {
 	ServiceVersion string
 
 	OTelEndpoint string
+
+	// Storage configuration
+	StorageType store.StorageType
+
+	// Connection string for database stores
+	ConnectionString string
+
+	// TableName for SQL database stores
+	TableName string
+
+	// TTL for Redis store in seconds
+	RedisTTL int
 }
 
 // Option is a function that modifies the configuration
@@ -92,6 +106,31 @@ func WithOTelEndpoint(endpoint string) Option {
 	}
 }
 
+// WithMemoryStorage configures the application to use in-memory storage
+func WithMemoryStorage() Option {
+	return func(c *Config) {
+		c.StorageType = store.StorageTypeMemory
+	}
+}
+
+// WithPostgresStorage configures the application to use PostgreSQL storage
+func WithPostgresStorage(connStr string, tableName string) Option {
+	return func(c *Config) {
+		c.StorageType = store.StorageTypePostgres
+		c.ConnectionString = connStr
+		c.TableName = tableName
+	}
+}
+
+// WithRedisStorage configures the application to use Redis storage
+func WithRedisStorage(connStr string, ttlSeconds int) Option {
+	return func(c *Config) {
+		c.StorageType = store.StorageTypeRedis
+		c.ConnectionString = connStr
+		c.RedisTTL = ttlSeconds
+	}
+}
+
 // ShouldIgnorePath checks if a path should be ignored based on the configured patterns
 // ShouldIgnorePath checks if a path should be ignored based on the configured patterns
 func (c *Config) ShouldIgnorePath(path string) bool {
@@ -131,5 +170,8 @@ func defaultConfig() *Config {
 		ServiceName:         "govisual",
 		ServiceVersion:      "dev",
 		OTelEndpoint:        "localhost:4317",
+		StorageType:         store.StorageTypeMemory,
+		TableName:           "govisual_requests",
+		RedisTTL:            86400, // 24 hours
 	}
 }

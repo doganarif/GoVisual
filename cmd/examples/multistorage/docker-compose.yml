@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ../../..
+      dockerfile: cmd/examples/multistorage/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      # Comment/uncomment the following environment variables to switch storage backends
+      
+      # Use in-memory storage (default, no env vars needed)
+      # - GOVISUAL_STORAGE_TYPE=memory
+      
+      # Use PostgreSQL storage
+      # - GOVISUAL_STORAGE_TYPE=postgres
+      # - GOVISUAL_PG_CONN=postgres://postgres:postgres@postgres:5432/govisual?sslmode=disable
+      # - GOVISUAL_PG_TABLE=govisual_requests
+      
+      # Use Redis storage
+      - GOVISUAL_STORAGE_TYPE=redis
+      - GOVISUAL_REDIS_CONN=redis://redis:6379/0
+      - GOVISUAL_REDIS_TTL=86400
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - govisual-net
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=govisual
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - govisual-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - govisual-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  govisual-net:
+    driver: bridge 
