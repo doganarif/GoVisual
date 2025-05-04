@@ -6,18 +6,20 @@ import (
 )
 
 type RequestLog struct {
-	ID              string      `json:"ID"`
-	Timestamp       time.Time   `json:"Timestamp"`
-	Method          string      `json:"Method"`
-	Path            string      `json:"Path"`
-	Query           string      `json:"Query"`
-	RequestHeaders  http.Header `json:"RequestHeaders"`
-	ResponseHeaders http.Header `json:"ResponseHeaders"`
-	StatusCode      int         `json:"StatusCode"`
-	Duration        int64       `json:"Duration"`
-	RequestBody     string      `json:"RequestBody,omitempty"`
-	ResponseBody    string      `json:"ResponseBody,omitempty"`
-	Error           string      `json:"Error,omitempty"`
+	ID              string                   `json:"ID"`
+	Timestamp       time.Time                `json:"Timestamp"`
+	Method          string                   `json:"Method"`
+	Path            string                   `json:"Path"`
+	Query           string                   `json:"Query"`
+	RequestHeaders  http.Header              `json:"RequestHeaders"`
+	ResponseHeaders http.Header              `json:"ResponseHeaders"`
+	StatusCode      int                      `json:"StatusCode"`
+	Duration        int64                    `json:"Duration"`
+	RequestBody     string                   `json:"RequestBody,omitempty"`
+	ResponseBody    string                   `json:"ResponseBody,omitempty"`
+	Error           string                   `json:"Error,omitempty"`
+	MiddlewareTrace []map[string]interface{} `json:"MiddlewareTrace,omitempty"`
+	RouteTrace      map[string]interface{}   `json:"RouteTrace,omitempty"`
 }
 
 func NewRequestLog(req *http.Request) *RequestLog {

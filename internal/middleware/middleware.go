@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"time"
@@ -89,6 +90,25 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 
 		// Capture response info
 		reqLog.StatusCode = resWriter.statusCode
+
+		// Extract middleware information from context
+		if middlewareValue := r.Context().Value("middleware"); middlewareValue != nil {
+			if middlewareInfo, ok := middlewareValue.(map[string]interface{}); ok {
+				if stack, ok := middlewareInfo["stack"].([]map[string]interface{}); ok {
+					reqLog.MiddlewareTrace = stack
+				}
+			}
+		}
+
+		// Extract route trace information
+		if routeValue := r.Context().Value("route"); routeValue != nil {
+			if routeStr, ok := routeValue.(string); ok {
+				var routeInfo map[string]interface{}
+				if err := json.Unmarshal([]byte(routeStr), &routeInfo); err == nil {
+					reqLog.RouteTrace = routeInfo
+				}
+			}
+		}
 
 		// Capture response body if enabled
 		if logResponseBody && resWriter.buffer != nil {

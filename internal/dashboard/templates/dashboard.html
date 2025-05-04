@@ -2,438 +2,576 @@
 <!-- All content is now managed by the layout with sections -->
 {{end}} {{define "scripts"}}
 <script>
-  // Global variables
-  let allRequests = [];
-  let filteredRequests = [];
-  let selectedRequestId = null;
+    // Global variables
+    let allRequests = [];
+    let filteredRequests = [];
+    let selectedRequestId = null;
 
-  // Fetch requests initially
-  fetch("/__viz/api/requests")
-    .then((response) => response.json())
-    .then((data) => {
-      allRequests = data;
-      filteredRequests = [...allRequests];
-      updateTable(filteredRequests);
-      updateStats(filteredRequests);
-    })
-    .catch((error) => console.error("Error fetching initial data:", error));
+    // Fetch requests initially
+    fetch("/__viz/api/requests")
+        .then((response) => response.json())
+        .then((data) => {
+            allRequests = data;
+            filteredRequests = [...allRequests];
+            updateTable(filteredRequests);
+            updateStats(filteredRequests);
+        })
+        .catch((error) => console.error("Error fetching initial data:", error));
 
-  // Set up SSE for live updates
-  const evtSource = new EventSource("/__viz/api/events");
-  evtSource.onmessage = function (event) {
-    try {
-      const data = JSON.parse(event.data);
-      allRequests = data;
-      applyFilters(); // This will update filteredRequests
-      updateTable(filteredRequests);
-      updateStats(filteredRequests);
-
-      // If details are open, refresh them
-      if (
-        selectedRequestId &&
-        document.getElementById("requestDetails").style.display === "block"
-      ) {
-        const selectedRequest = allRequests.find(
-          (req) => req.ID === selectedRequestId
-        );
-        if (selectedRequest) {
-          showRequestDetails(selectedRequest);
-        }
-      }
-
-      // Update memory usage
-      updateMemoryUsage();
-    } catch (error) {
-      console.error("Error parsing SSE data:", error);
-    }
-  };
-
-  // Apply filters to the requests
-  function applyFilters() {
-    const methodFilter = document.getElementById("method-filter").value;
-    const statusFilter = document.getElementById("status-filter").value;
-    const pathFilter = document
-      .getElementById("path-filter")
-      .value.toLowerCase();
-    const durationFilter = document.getElementById("duration-filter").value;
-
-    filteredRequests = allRequests.filter((req) => {
-      // Method filter
-      if (methodFilter && req.Method !== methodFilter) {
-        return false;
-      }
-
-      // Status code filter
-      if (statusFilter) {
-        const firstDigit = Math.floor(req.StatusCode / 100);
-        if (statusFilter === "2xx" && firstDigit !== 2) return false;
-        if (statusFilter === "3xx" && firstDigit !== 3) return false;
-        if (statusFilter === "4xx" && firstDigit !== 4) return false;
-        if (statusFilter === "5xx" && firstDigit !== 5) return false;
-      }
-
-      // Path filter
-      if (pathFilter && !req.Path.toLowerCase().includes(pathFilter)) {
-        return false;
-      }
-
-      // Duration filter
-      if (
-        durationFilter &&
-        (!req.Duration || req.Duration < parseInt(durationFilter))
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-  }
-
-  // Update the table with the request data
-  function updateTable(requests) {
-    const tbody = document.getElementById("requestsBody");
-    tbody.innerHTML = "";
-
-    if (!requests || requests.length === 0) {
-      const row = document.createElement("tr");
-      const cell = document.createElement("td");
-      cell.colSpan = 5;
-      cell.textContent = "No requests logged yet";
-      cell.style.textAlign = "center";
-      row.appendChild(cell);
-      tbody.appendChild(row);
-      return;
-    }
-
-    // Sort requests by timestamp, newest first
-    const sortedRequests = [...requests].sort(
-      (a, b) => new Date(b.Timestamp) - new Date(a.Timestamp)
-    );
-
-    sortedRequests.forEach((req) => {
-      const row = document.createElement("tr");
-      row.setAttribute("data-id", req.ID);
-      row.addEventListener("click", () => {
-        // Navigate to request details section and show details
-        document.querySelector('[data-target="requests-section"]').click();
-        showRequestDetails(req);
-        showRequestTrace(req);
-      });
-
-      const timeCell = document.createElement("td");
-      timeCell.textContent = new Date(req.Timestamp).toLocaleTimeString();
-      row.appendChild(timeCell);
-
-      const methodCell = document.createElement("td");
-      methodCell.textContent = req.Method;
-      // Add CSS class based on method
-      methodCell.className = "method-" + req.Method.toLowerCase();
-      row.appendChild(methodCell);
-
-      const pathCell = document.createElement("td");
-      pathCell.textContent = req.Path + (req.Query ? "?" + req.Query : "");
-      row.appendChild(pathCell);
-
-      const statusCell = document.createElement("td");
-      statusCell.textContent = req.StatusCode;
-      // Add CSS class based on status code
-      if (req.StatusCode >= 200 && req.StatusCode < 300) {
-        statusCell.className = "status-success";
-      } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
-        statusCell.className = "status-redirect";
-      } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
-        statusCell.className = "status-client-error";
-      } else if (req.StatusCode >= 500) {
-        statusCell.className = "status-server-error";
-      }
-      row.appendChild(statusCell);
-
-      const durationCell = document.createElement("td");
-      if (req.Duration !== undefined && req.Duration !== null) {
-        durationCell.textContent = req.Duration + " ms";
-        // Highlight slow requests
-        if (req.Duration > 500) {
-          durationCell.className = "status-server-error";
-        } else if (req.Duration > 200) {
-          durationCell.className = "status-client-error";
-        }
-      } else {
-        durationCell.textContent = "N/A";
-      }
-      row.appendChild(durationCell);
-
-      tbody.appendChild(row);
-    });
-  }
-
-  // Update statistics
-  function updateStats(requests) {
-    if (!requests || requests.length === 0) {
-      document.getElementById("stat-total").textContent = "0";
-      document.getElementById("stat-success").textContent = "0";
-      document.getElementById("stat-redirect").textContent = "0";
-      document.getElementById("stat-client-error").textContent = "0";
-      document.getElementById("stat-server-error").textContent = "0";
-      document.getElementById("stat-avg-time").textContent = "0 ms";
-
-      // Update sidebar stats
-      updateSidebarStats(0, 0, 0);
-      return;
-    }
-
-    let success = 0;
-    let redirect = 0;
-    let clientError = 0;
-    let serverError = 0;
-    let totalDuration = 0;
-    let validDurationCount = 0;
-
-    requests.forEach((req) => {
-      if (req.StatusCode >= 200 && req.StatusCode < 300) success++;
-      else if (req.StatusCode >= 300 && req.StatusCode < 400) redirect++;
-      else if (req.StatusCode >= 400 && req.StatusCode < 500) clientError++;
-      else if (req.StatusCode >= 500) serverError++;
-
-      if (req.Duration !== undefined && req.Duration !== null) {
-        totalDuration += req.Duration;
-        validDurationCount++;
-      }
-    });
-
-    const avgDuration =
-      validDurationCount > 0
-        ? Math.round(totalDuration / validDurationCount)
-        : 0;
-
-    const successRate =
-      requests.length > 0 ? Math.round((success / requests.length) * 100) : 0;
-
-    document.getElementById("stat-total").textContent = requests.length;
-    document.getElementById("stat-success").textContent = success;
-    document.getElementById("stat-redirect").textContent = redirect;
-    document.getElementById("stat-client-error").textContent = clientError;
-    document.getElementById("stat-server-error").textContent = serverError;
-    document.getElementById("stat-avg-time").textContent = avgDuration + " ms";
-
-    // Update sidebar stats
-    updateSidebarStats(requests.length, successRate, avgDuration);
-  }
-
-  // Show request details
-  function showRequestDetails(req) {
-    selectedRequestId = req.ID;
-
-    document.getElementById("detail-id").textContent = req.ID;
-    document.getElementById("detail-time").textContent = new Date(
-      req.Timestamp
-    ).toLocaleString();
-    document.getElementById("detail-method").textContent = req.Method;
-    document.getElementById("detail-path").textContent =
-      req.Path + (req.Query ? "?" + req.Query : "");
-    document.getElementById("detail-status").textContent = req.StatusCode;
-    document.getElementById("detail-duration").textContent =
-      req.Duration !== undefined && req.Duration !== null
-        ? req.Duration + " ms"
-        : "N/A";
-
-    // Format headers
-    const requestHeaders = formatHeaders(req.RequestHeaders);
-    const responseHeaders = formatHeaders(req.ResponseHeaders);
-
-    document.getElementById("detail-request-headers").textContent =
-      requestHeaders || "No headers available";
-    document.getElementById("detail-response-headers").textContent =
-      responseHeaders || "No headers available";
-
-    // Handle request and response bodies
-    const requestBodyContainer = document.getElementById(
-      "request-body-container"
-    );
-    const responseBodyContainer = document.getElementById(
-      "response-body-container"
-    );
-    const requestBodyElement = document.getElementById("detail-request-body");
-    const responseBodyElement = document.getElementById("detail-response-body");
-
-    if (req.RequestBody) {
-      requestBodyContainer.style.display = "block";
-      requestBodyElement.textContent = formatBody(req.RequestBody);
-    } else {
-      requestBodyContainer.style.display = "none";
-    }
-
-    if (req.ResponseBody) {
-      responseBodyContainer.style.display = "block";
-      responseBodyElement.textContent = formatBody(req.ResponseBody);
-    } else {
-      responseBodyContainer.style.display = "none";
-    }
-
-    // Show the details
-    document.getElementById("requestDetails").style.display = "block";
-  }
-
-  // Show request trace
-  function showRequestTrace(req) {
-    const traceContainer = document.getElementById("traceContainer");
-    traceContainer.style.display = "block";
-
-    // Update the trace timing information
-    document.getElementById("trace-total-time").textContent = req.Duration
-      ? req.Duration + " ms"
-      : "N/A";
-
-    // These values would be populated if we had more detailed timing data
-    // For now we'll add placeholder values that are a portion of the total duration
-    const duration = req.Duration || 0;
-    document.getElementById("trace-ttfb").textContent =
-      Math.round(duration * 0.2) + " ms";
-    document.getElementById("trace-network-time").textContent =
-      Math.round(duration * 0.1) + " ms";
-    document.getElementById("trace-processing-time").textContent =
-      Math.round(duration * 0.7) + " ms";
-
-    // Populate timeline (would need more detailed timing data)
-    const timelineContent = document.getElementById("timeline-content");
-    timelineContent.innerHTML = "";
-
-    // Example phases - in a real implementation, this would come from detailed tracing
-    const phases = [
-      { name: "Connection", duration: Math.round(duration * 0.05) },
-      { name: "Request Processing", duration: Math.round(duration * 0.15) },
-      { name: "Handler Execution", duration: Math.round(duration * 0.7) },
-      { name: "Response Generation", duration: Math.round(duration * 0.1) },
-    ];
-
-    phases.forEach((phase) => {
-      const timelineItem = document.createElement("div");
-      timelineItem.className = "timeline-item";
-
-      const phaseName = document.createElement("div");
-      phaseName.textContent = phase.name;
-
-      const phaseDuration = document.createElement("div");
-      phaseDuration.textContent = phase.duration + " ms";
-
-      timelineItem.appendChild(phaseName);
-      timelineItem.appendChild(phaseDuration);
-      timelineContent.appendChild(timelineItem);
-    });
-  }
-
-  // Format headers for display
-  function formatHeaders(headers) {
-    if (!headers) return "";
-
-    let result = "";
-    for (const key in headers) {
-      result += `${key}: ${headers[key].join(", ")}\n`;
-    }
-    return result;
-  }
-
-  // Format body for display
-  function formatBody(body) {
-    try {
-      // Try to parse and pretty-print JSON
-      const json = JSON.parse(body);
-      return JSON.stringify(json, null, 2);
-    } catch (e) {
-      // If not JSON, return as-is
-      return body;
-    }
-  }
-
-  // Update memory usage (simulated for now)
-  function updateMemoryUsage() {
-    // In a real implementation, this would get data from the server
-    const usedMemory = Math.random() * 2000; // Simulated memory usage (MB)
-    const totalMemory = 8192; // Simulated total memory (MB)
-    const percentage = (usedMemory / totalMemory) * 100;
-
-    document.getElementById("memory-used").style.width = percentage + "%";
-    document.getElementById("memory-used-value").textContent =
-      Math.round(usedMemory) + " MB";
-    document.getElementById("memory-total").textContent =
-      Math.round(totalMemory) + " MB";
-  }
-
-  // Toggle collapse function for collapsible sections
-  function toggleCollapse(element) {
-    const card = element.closest(".collapsible");
-    card.classList.toggle("collapsed");
-
-    const icon = element.querySelector(".collapse-icon");
-    if (card.classList.contains("collapsed")) {
-      icon.textContent = "▲";
-    } else {
-      icon.textContent = "▼";
-    }
-  }
-
-  // Close details
-  document.getElementById("close-details").addEventListener("click", () => {
-    document.getElementById("requestDetails").style.display = "none";
-    document.getElementById("traceContainer").style.display = "none";
-    selectedRequestId = null;
-
-    // Return to dashboard section
-    document.querySelector('[data-target="dashboard-section"]').click();
-  });
-
-  // Clear all requests function
-  function clearAllRequests() {
-    if (confirm("Are you sure you want to clear all requests?")) {
-      // In a real implementation, this would call an API endpoint to clear the requests
-      fetch("/__viz/api/clear", {
-        method: "POST",
-      })
-        .then((response) => {
-          if (response.ok) {
-            // Clear local data
-            allRequests = [];
-            filteredRequests = [];
+    // Set up SSE for live updates
+    const evtSource = new EventSource("/__viz/api/events");
+    evtSource.onmessage = function (event) {
+        try {
+            const data = JSON.parse(event.data);
+            allRequests = data;
+            applyFilters(); // This will update filteredRequests
             updateTable(filteredRequests);
             updateStats(filteredRequests);
 
-            // Hide details if open
-            document.getElementById("requestDetails").style.display = "none";
-            document.getElementById("traceContainer").style.display = "none";
-            selectedRequestId = null;
-          }
-        })
-        .catch((error) => console.error("Error clearing requests:", error));
+            // If details are open, refresh them
+            if (
+                selectedRequestId &&
+                document.getElementById("requestDetails").style.display === "block"
+            ) {
+                const selectedRequest = allRequests.find(
+                    (req) => req.ID === selectedRequestId
+                );
+                if (selectedRequest) {
+                    showRequestDetails(selectedRequest);
+                }
+            }
+
+            // Update memory usage
+            updateMemoryUsage();
+        } catch (error) {
+            console.error("Error parsing SSE data:", error);
+        }
+    };
+
+    // Apply filters to the requests
+    function applyFilters() {
+        const methodFilter = document.getElementById("method-filter").value;
+        const statusFilter = document.getElementById("status-filter").value;
+        const pathFilter = document
+            .getElementById("path-filter")
+            .value.toLowerCase();
+        const durationFilter = document.getElementById("duration-filter").value;
+
+        filteredRequests = allRequests.filter((req) => {
+            // Method filter
+            if (methodFilter && req.Method !== methodFilter) {
+                return false;
+            }
+
+            // Status code filter
+            if (statusFilter) {
+                const firstDigit = Math.floor(req.StatusCode / 100);
+                if (statusFilter === "2xx" && firstDigit !== 2) return false;
+                if (statusFilter === "3xx" && firstDigit !== 3) return false;
+                if (statusFilter === "4xx" && firstDigit !== 4) return false;
+                if (statusFilter === "5xx" && firstDigit !== 5) return false;
+            }
+
+            // Path filter
+            if (pathFilter && !req.Path.toLowerCase().includes(pathFilter)) {
+                return false;
+            }
+
+            // Duration filter
+            if (
+                durationFilter &&
+                (!req.Duration || req.Duration < parseInt(durationFilter))
+            ) {
+                return false;
+            }
+
+            return true;
+        });
     }
-  }
 
-  // Set up filter actions
-  document.getElementById("apply-filters").addEventListener("click", () => {
-    applyFilters();
-    updateTable(filteredRequests);
-    updateStats(filteredRequests);
-  });
+    function showMiddlewareTrace(req) {
+        const middlewareList = document.getElementById("middleware-tbody");
+        middlewareList.innerHTML = "";
 
-  document.getElementById("reset-filters").addEventListener("click", () => {
-    // Reset filter inputs
-    document.getElementById("method-filter").value = "";
-    document.getElementById("status-filter").value = "";
-    document.getElementById("path-filter").value = "";
-    document.getElementById("duration-filter").value = "";
+        const middlewareChart = document.getElementById("middleware-chart");
+        middlewareChart.innerHTML = "";
 
-    // Reset filtered data
-    filteredRequests = [...allRequests];
-    updateTable(filteredRequests);
-    updateStats(filteredRequests);
-  });
+        if (!req.MiddlewareTrace || req.MiddlewareTrace.length === 0) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 5;
+            cell.textContent = "No middleware trace available";
+            cell.style.textAlign = "center";
+            row.appendChild(cell);
+            middlewareList.appendChild(row);
+            return;
+        }
 
-  document
-    .getElementById("clear-requests")
-    .addEventListener("click", clearAllRequests);
+        // Create a timeline visualization
+        const totalDuration = req.Duration;
+        const timelineStart = new Date(req.MiddlewareTrace[0].start_time);
 
-  // Initial memory usage update
-  updateMemoryUsage();
+        // Add timeline axis
+        const timelineAxis = document.createElement("div");
+        timelineAxis.className = "timeline-axis";
 
-  // Set up periodic memory usage updates
-  setInterval(updateMemoryUsage, 5000);
+        // Add timeline ticks
+        for (let i = 0; i <= 5; i++) {
+            const tick = document.createElement("div");
+            tick.className = "timeline-tick";
+            tick.style.left = (i * 20) + "%";
+
+            const label = document.createElement("div");
+            label.className = "timeline-label";
+            label.style.left = (i * 20) + "%";
+            label.textContent = Math.round(totalDuration * i / 5) + " ms";
+
+            timelineAxis.appendChild(tick);
+            timelineAxis.appendChild(label);
+        }
+
+        middlewareChart.appendChild(timelineAxis);
+
+        // Sort middleware by start time
+        const sortedMiddleware = [...req.MiddlewareTrace].sort((a, b) => a.start_time - b.start_time);
+
+        // Render middleware bars
+        sortedMiddleware.forEach((mw, index) => {
+            const startTime = mw.start_time;
+            const endTime = mw.end_time || startTime + mw.duration;
+            const duration = mw.duration;
+
+            // Calculate position and width for timeline visualization
+            const startPos = ((startTime - timelineStart) / totalDuration) * 100;
+            const widthPct = (duration / totalDuration) * 100;
+
+            // Create middleware bar
+            const bar = document.createElement("div");
+            bar.className = "middleware-bar";
+            if (mw.error) {
+                bar.className += " error";
+            }
+            bar.style.left = startPos + "%";
+            bar.style.width = Math.max(0.5, widthPct) + "%";
+            bar.style.top = (index * 25) + "px";
+            bar.title = `${mw.name}: ${duration}ms`;
+
+            middlewareChart.appendChild(bar);
+
+            // Populate table
+            const row = document.createElement("tr");
+
+            const nameCell = document.createElement("td");
+            nameCell.textContent = mw.name;
+            row.appendChild(nameCell);
+
+            const durationCell = document.createElement("td");
+            durationCell.textContent = duration + " ms";
+            row.appendChild(durationCell);
+
+            const startTimeCell = document.createElement("td");
+            startTimeCell.textContent = new Date(startTime).toLocaleTimeString() + "." + new Date(startTime).getMilliseconds();
+            row.appendChild(startTimeCell);
+
+            const endTimeCell = document.createElement("td");
+            endTimeCell.textContent = new Date(endTime).toLocaleTimeString() + "." + new Date(endTime).getMilliseconds();
+            row.appendChild(endTimeCell);
+
+            const statusCell = document.createElement("td");
+            if (mw.error) {
+                statusCell.textContent = "Error: " + (mw.error_message || "Unknown error");
+                statusCell.className = "status-error";
+            } else {
+                statusCell.textContent = "Success";
+                statusCell.className = "status-success";
+            }
+            row.appendChild(statusCell);
+
+            middlewareList.appendChild(row);
+        });
+
+        // Adjust the height of the chart
+        middlewareChart.style.height = ((sortedMiddleware.length * 25) + 30) + "px";
+    }
+
+
+    // Update the table with the request data
+    function updateTable(requests) {
+        const tbody = document.getElementById("requestsBody");
+        tbody.innerHTML = "";
+
+        if (!requests || requests.length === 0) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 5;
+            cell.textContent = "No requests logged yet";
+            cell.style.textAlign = "center";
+            row.appendChild(cell);
+            tbody.appendChild(row);
+            return;
+        }
+
+        // Sort requests by timestamp, newest first
+        const sortedRequests = [...requests].sort(
+            (a, b) => new Date(b.Timestamp) - new Date(a.Timestamp)
+        );
+
+        sortedRequests.forEach((req) => {
+            const row = document.createElement("tr");
+            row.setAttribute("data-id", req.ID);
+            row.addEventListener("click", () => {
+                // Navigate to request details section and show details
+                document.querySelector('[data-target="requests-section"]').click();
+                showRequestDetails(req);
+                showRequestTrace(req);
+            });
+
+            const timeCell = document.createElement("td");
+            timeCell.textContent = new Date(req.Timestamp).toLocaleTimeString();
+            row.appendChild(timeCell);
+
+            const methodCell = document.createElement("td");
+            methodCell.textContent = req.Method;
+            // Add CSS class based on method
+            methodCell.className = "method-" + req.Method.toLowerCase();
+            row.appendChild(methodCell);
+
+            const pathCell = document.createElement("td");
+            pathCell.textContent = req.Path + (req.Query ? "?" + req.Query : "");
+            row.appendChild(pathCell);
+
+            const statusCell = document.createElement("td");
+            statusCell.textContent = req.StatusCode;
+            // Add CSS class based on status code
+            if (req.StatusCode >= 200 && req.StatusCode < 300) {
+                statusCell.className = "status-success";
+            } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
+                statusCell.className = "status-redirect";
+            } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
+                statusCell.className = "status-client-error";
+            } else if (req.StatusCode >= 500) {
+                statusCell.className = "status-server-error";
+            }
+            row.appendChild(statusCell);
+
+            const durationCell = document.createElement("td");
+            if (req.Duration !== undefined && req.Duration !== null) {
+                durationCell.textContent = req.Duration + " ms";
+                // Highlight slow requests
+                if (req.Duration > 500) {
+                    durationCell.className = "status-server-error";
+                } else if (req.Duration > 200) {
+                    durationCell.className = "status-client-error";
+                }
+            } else {
+                durationCell.textContent = "N/A";
+            }
+            row.appendChild(durationCell);
+
+            tbody.appendChild(row);
+        });
+    }
+
+    // Update statistics
+    function updateStats(requests) {
+        if (!requests || requests.length === 0) {
+            document.getElementById("stat-total").textContent = "0";
+            document.getElementById("stat-success").textContent = "0";
+            document.getElementById("stat-redirect").textContent = "0";
+            document.getElementById("stat-client-error").textContent = "0";
+            document.getElementById("stat-server-error").textContent = "0";
+            document.getElementById("stat-avg-time").textContent = "0 ms";
+
+            // Update sidebar stats
+            updateSidebarStats(0, 0, 0);
+            return;
+        }
+
+        let success = 0;
+        let redirect = 0;
+        let clientError = 0;
+        let serverError = 0;
+        let totalDuration = 0;
+        let validDurationCount = 0;
+
+        requests.forEach((req) => {
+            if (req.StatusCode >= 200 && req.StatusCode < 300) success++;
+            else if (req.StatusCode >= 300 && req.StatusCode < 400) redirect++;
+            else if (req.StatusCode >= 400 && req.StatusCode < 500) clientError++;
+            else if (req.StatusCode >= 500) serverError++;
+
+            if (req.Duration !== undefined && req.Duration !== null) {
+                totalDuration += req.Duration;
+                validDurationCount++;
+            }
+        });
+
+        const avgDuration =
+            validDurationCount > 0
+                ? Math.round(totalDuration / validDurationCount)
+                : 0;
+
+        const successRate =
+            requests.length > 0 ? Math.round((success / requests.length) * 100) : 0;
+
+        document.getElementById("stat-total").textContent = requests.length;
+        document.getElementById("stat-success").textContent = success;
+        document.getElementById("stat-redirect").textContent = redirect;
+        document.getElementById("stat-client-error").textContent = clientError;
+        document.getElementById("stat-server-error").textContent = serverError;
+        document.getElementById("stat-avg-time").textContent = avgDuration + " ms";
+
+        // Update sidebar stats
+        updateSidebarStats(requests.length, successRate, avgDuration);
+    }
+
+    // Show request details
+    function showRequestDetails(req) {
+        selectedRequestId = req.ID;
+
+        document.getElementById("detail-id").textContent = req.ID;
+        document.getElementById("detail-time").textContent = new Date(
+            req.Timestamp
+        ).toLocaleString();
+        document.getElementById("detail-method").textContent = req.Method;
+        document.getElementById("detail-path").textContent =
+            req.Path + (req.Query ? "?" + req.Query : "");
+        document.getElementById("detail-status").textContent = req.StatusCode;
+        document.getElementById("detail-duration").textContent =
+            req.Duration !== undefined && req.Duration !== null
+                ? req.Duration + " ms"
+                : "N/A";
+
+        // Format headers
+        const requestHeaders = formatHeaders(req.RequestHeaders);
+        const responseHeaders = formatHeaders(req.ResponseHeaders);
+
+        document.getElementById("detail-request-headers").textContent =
+            requestHeaders || "No headers available";
+        document.getElementById("detail-response-headers").textContent =
+            responseHeaders || "No headers available";
+
+        // Handle request and response bodies
+        const requestBodyContainer = document.getElementById(
+            "request-body-container"
+        );
+        const responseBodyContainer = document.getElementById(
+            "response-body-container"
+        );
+        const requestBodyElement = document.getElementById("detail-request-body");
+        const responseBodyElement = document.getElementById("detail-response-body");
+
+        if (req.RequestBody) {
+            requestBodyContainer.style.display = "block";
+            requestBodyElement.textContent = formatBody(req.RequestBody);
+        } else {
+            requestBodyContainer.style.display = "none";
+        }
+
+        if (req.ResponseBody) {
+            responseBodyContainer.style.display = "block";
+            responseBodyElement.textContent = formatBody(req.ResponseBody);
+        } else {
+            responseBodyContainer.style.display = "none";
+        }
+
+        // Show the details
+        document.getElementById("requestDetails").style.display = "block";
+    }
+
+    // Show request trace
+    function showRequestTrace(req) {
+        const traceContainer = document.getElementById("traceContainer");
+        traceContainer.style.display = "block";
+
+        // Update the trace timing information
+        document.getElementById("trace-total-time").textContent = req.Duration
+            ? req.Duration + " ms"
+            : "N/A";
+
+        // These values would be populated if we had more detailed timing data
+        const duration = req.Duration || 0;
+        document.getElementById("trace-ttfb").textContent =
+            Math.round(duration * 0.2) + " ms";
+        document.getElementById("trace-network-time").textContent =
+            Math.round(duration * 0.1) + " ms";
+        document.getElementById("trace-processing-time").textContent =
+            Math.round(duration * 0.7) + " ms";
+
+        // Populate timeline (would need more detailed timing data)
+        const timelineContent = document.getElementById("timeline-content");
+        timelineContent.innerHTML = "";
+
+        // Example phases - in a real implementation, this would come from detailed tracing
+        const phases = [
+            {name: "Connection", duration: Math.round(duration * 0.05)},
+            {name: "Request Processing", duration: Math.round(duration * 0.15)},
+            {name: "Handler Execution", duration: Math.round(duration * 0.7)},
+            {name: "Response Generation", duration: Math.round(duration * 0.1)},
+        ];
+
+        phases.forEach((phase) => {
+            const timelineItem = document.createElement("div");
+            timelineItem.className = "timeline-item";
+
+            const phaseName = document.createElement("div");
+            phaseName.textContent = phase.name;
+
+            const phaseDuration = document.createElement("div");
+            phaseDuration.textContent = phase.duration + " ms";
+
+            timelineItem.appendChild(phaseName);
+            timelineItem.appendChild(phaseDuration);
+            timelineContent.appendChild(timelineItem);
+        });
+
+        // Show middleware trace
+        showMiddlewareTrace(req);
+
+        // Show route trace if available
+        if (req.RouteTrace) {
+            document.getElementById("trace-route-match").style.display = "block";
+            const routeDetails = document.getElementById("trace-route-details");
+            routeDetails.innerHTML = "";
+
+            const routePattern = document.createElement("div");
+            routePattern.className = "trace-detail-item";
+            routePattern.innerHTML = `<strong>Pattern:</strong> ${req.RouteTrace.pattern || "Unknown"}`;
+            routeDetails.appendChild(routePattern);
+
+            const routePath = document.createElement("div");
+            routePath.className = "trace-detail-item";
+            routePath.innerHTML = `<strong>Path:</strong> ${req.RouteTrace.path || "Unknown"}`;
+            routeDetails.appendChild(routePath);
+
+            if (req.RouteTrace.params) {
+                const paramsTitle = document.createElement("div");
+                paramsTitle.className = "trace-detail-item";
+                paramsTitle.innerHTML = `<strong>Parameters:</strong>`;
+                routeDetails.appendChild(paramsTitle);
+
+                const paramsList = document.createElement("ul");
+                paramsList.className = "route-params-list";
+
+                for (const [key, value] of Object.entries(req.RouteTrace.params)) {
+                    const paramItem = document.createElement("li");
+                    paramItem.innerHTML = `<strong>${key}:</strong> ${value}`;
+                    paramsList.appendChild(paramItem);
+                }
+
+                routeDetails.appendChild(paramsList);
+            }
+        } else {
+            document.getElementById("trace-route-match").style.display = "none";
+        }
+    }
+
+    // Format headers for display
+    function formatHeaders(headers) {
+        if (!headers) return "";
+
+        let result = "";
+        for (const key in headers) {
+            result += `${key}: ${headers[key].join(", ")}\n`;
+        }
+        return result;
+    }
+
+    // Format body for display
+    function formatBody(body) {
+        try {
+            // Try to parse and pretty-print JSON
+            const json = JSON.parse(body);
+            return JSON.stringify(json, null, 2);
+        } catch (e) {
+            // If not JSON, return as-is
+            return body;
+        }
+    }
+
+    // Update memory usage (simulated for now)
+    function updateMemoryUsage() {
+        // In a real implementation, this would get data from the server
+        const usedMemory = Math.random() * 2000; // Simulated memory usage (MB)
+        const totalMemory = 8192; // Simulated total memory (MB)
+        const percentage = (usedMemory / totalMemory) * 100;
+
+        document.getElementById("memory-used").style.width = percentage + "%";
+        document.getElementById("memory-used-value").textContent =
+            Math.round(usedMemory) + " MB";
+        document.getElementById("memory-total").textContent =
+            Math.round(totalMemory) + " MB";
+    }
+
+    // Toggle collapse function for collapsible sections
+    function toggleCollapse(element) {
+        const card = element.closest(".collapsible");
+        card.classList.toggle("collapsed");
+    }
+
+    // Close details
+    document.getElementById("close-details").addEventListener("click", () => {
+        document.getElementById("requestDetails").style.display = "none";
+        document.getElementById("traceContainer").style.display = "none";
+        selectedRequestId = null;
+
+        // Return to dashboard section
+        document.querySelector('[data-target="dashboard-section"]').click();
+    });
+
+    // Clear all requests function
+    function clearAllRequests() {
+        if (confirm("Are you sure you want to clear all requests?")) {
+            // In a real implementation, this would call an API endpoint to clear the requests
+            fetch("/__viz/api/clear", {
+                method: "POST",
+            })
+                .then((response) => {
+                    if (response.ok) {
+                        // Clear local data
+                        allRequests = [];
+                        filteredRequests = [];
+                        updateTable(filteredRequests);
+                        updateStats(filteredRequests);
+
+                        // Hide details if open
+                        document.getElementById("requestDetails").style.display = "none";
+                        document.getElementById("traceContainer").style.display = "none";
+                        selectedRequestId = null;
+                    }
+                })
+                .catch((error) => console.error("Error clearing requests:", error));
+        }
+    }
+
+    // Set up filter actions
+    document.getElementById("apply-filters").addEventListener("click", () => {
+        applyFilters();
+        updateTable(filteredRequests);
+        updateStats(filteredRequests);
+    });
+
+    document.getElementById("reset-filters").addEventListener("click", () => {
+        // Reset filter inputs
+        document.getElementById("method-filter").value = "";
+        document.getElementById("status-filter").value = "";
+        document.getElementById("path-filter").value = "";
+        document.getElementById("duration-filter").value = "";
+
+        // Reset filtered data
+        filteredRequests = [...allRequests];
+        updateTable(filteredRequests);
+        updateStats(filteredRequests);
+    });
+
+    document
+        .getElementById("clear-requests")
+        .addEventListener("click", clearAllRequests);
+
+    // Initial memory usage update
+    updateMemoryUsage();
+
+    // Set up periodic memory usage updates
+    setInterval(updateMemoryUsage, 5000);
 </script>
 {{end}}

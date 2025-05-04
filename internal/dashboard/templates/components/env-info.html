@@ -2,7 +2,7 @@
 <div class="card collapsible">
   <div class="card-header" onclick="toggleCollapse(this)">
     <h2>Environment Info</h2>
-    <span class="collapse-icon">▼</span>
+    <!-- Removed collapse icon -->
   </div>
   <div class="card-content">
     <div class="env-grid">
@@ -57,18 +57,18 @@
       <div class="env-vars-table">
         <table>
           <thead>
-            <tr>
-              <th>Name</th>
-              <th>Value</th>
-            </tr>
+          <tr>
+            <th>Name</th>
+            <th>Value</th>
+          </tr>
           </thead>
           <tbody id="env-vars-body">
-            {{range $key, $value := .EnvVars}}
-            <tr>
-              <td>{{$key}}</td>
-              <td>{{$value}}</td>
-            </tr>
-            {{end}}
+          {{range $key, $value := .EnvVars}}
+          <tr>
+            <td>{{$key}}</td>
+            <td>{{$value}}</td>
+          </tr>
+          {{end}}
           </tbody>
         </table>
       </div>
