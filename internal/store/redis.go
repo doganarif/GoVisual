@@ -228,6 +228,38 @@ func (s *RedisStore) getLogs(ids []string) []*model.RequestLog {
 	return logs
 }
 
+// Clear removes all logs from the store
+func (s *RedisStore) Clear() error {
+	// Get all log IDs
+	ids, err := s.client.ZRange(s.ctx, s.keyPrefix+"logs", 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get log IDs: %w", err)
+	}
+
+	// Create a pipeline for batch operations
+	pipe := s.client.Pipeline()
+
+	// Remove from sorted set
+	pipe.ZRem(s.ctx, s.keyPrefix+"logs", ids)
+
+	// Remove each log from Redis
+	for _, id := range ids {
+		pipe.Unlink(s.ctx, s.keyPrefix+id)
+	}
+
+	// Execute pipeline
+	if _, err := pipe.Exec(s.ctx); err != nil {
+		return fmt.Errorf("failed to clear logs: %w", err)
+	}
+
+	// Delete the sorted set
+	if err := s.client.Del(s.ctx, s.keyPrefix+"logs").Err(); err != nil {
+		return fmt.Errorf("failed to delete sorted set: %w", err)
+	}
+
+	return nil
+}
+
 // Close closes the Redis client connection
 func (s *RedisStore) Close() error {
 	return s.client.Close()

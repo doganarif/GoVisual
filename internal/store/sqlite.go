@@ -388,6 +388,17 @@ func (s *SQLiteStore) queryLogs(query string, args ...interface{}) []*model.Requ
 	return logs
 }
 
+// Clear removes all logs from the store
+func (s *SQLiteStore) Clear() error {
+	query := fmt.Sprintf("DELETE FROM %s", s.tableName)
+	_, err := s.db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("failed to clear logs: %w", err)
+	}
+
+	return nil
+}
+
 // Close closes the database connection
 func (s *SQLiteStore) Close() error {
 	// Only close the connection if we own it
