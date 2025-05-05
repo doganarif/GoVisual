@@ -95,7 +95,7 @@ func (s *InMemoryStore) Clear() error {
 		return nil
 	}
 
-	s.logs = make([]*model.RequestLog, 0)
+	s.logs = make([]*model.RequestLog, s.capacity)
 	s.size = 0
 	s.next = 0
 	return nil
