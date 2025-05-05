@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/doganarif/govisual/internal/store"
@@ -43,6 +45,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/api/clear":
 		h.handleClearRequests(w, r)
+		return
+	case "/api/compare":
+		h.handleCompareRequests(w, r)
+		return
+	case "/api/replay":
+		h.handleReplayRequest(w, r)
 		return
 	case "/":
 		h.handleDashboard(w, r)
@@ -160,6 +168,125 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		}
+	}
+}
+
+// handleCompareRequests serves the JSON API for comparing specific requests
+func (h *Handler) handleCompareRequests(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get request IDs from query parameters
+	ids := r.URL.Query()["id"]
+	if len(ids) < 2 {
+		http.Error(w, "At least two request IDs are required", http.StatusBadRequest)
+		return
+	}
+
+	// Get all requests
+	allRequests := h.store.GetAll()
+
+	// Filter requests by IDs
+	compareRequests := []interface{}{}
+	for _, req := range allRequests {
+		for _, id := range ids {
+			if req.ID == id {
+				compareRequests = append(compareRequests, req)
+				break
+			}
+		}
+	}
+
+	// Return the filtered requests
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	encoder.Encode(compareRequests)
+}
+
+// handleReplayRequest handles replaying a captured request
+func (h *Handler) handleReplayRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse request body
+	decoder := json.NewDecoder(r.Body)
+	var replayRequest struct {
+		RequestID string            `json:"requestId"`
+		URL       string            `json:"url"`
+		Method    string            `json:"method"`
+		Headers   map[string]string `json:"headers"`
+		Body      string            `json:"body"`
+	}
+
+	if err := decoder.Decode(&replayRequest); err != nil {
+		http.Error(w, "Invalid request format: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Create HTTP client
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Create request
+	req, err := http.NewRequest(replayRequest.Method, replayRequest.URL, strings.NewReader(replayRequest.Body))
+	if err != nil {
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Add headers
+	for key, value := range replayRequest.Headers {
+		req.Header.Add(key, value)
+	}
+
+	// Execute request
+	startTime := time.Now()
+	resp, err := client.Do(req)
+	duration := time.Since(startTime).Milliseconds()
+
+	if err != nil {
+		http.Error(w, "Error executing request: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Error reading response body: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Convert headers to map for JSON response
+	headers := make(map[string][]string)
+	for k, v := range resp.Header {
+		headers[k] = v
+	}
+
+	// Create response
+	replayResponse := struct {
+		StatusCode      int                 `json:"statusCode"`
+		Headers         map[string][]string `json:"headers"`
+		Body            string              `json:"body"`
+		Duration        int64               `json:"duration"`
+		OriginalRequest string              `json:"originalRequest"`
+	}{
+		StatusCode:      resp.StatusCode,
+		Headers:         headers,
+		Body:            string(respBody),
+		Duration:        duration,
+		OriginalRequest: replayRequest.RequestID,
+	}
+
+	// Send response
+	w.Header().Set("Content-Type", "application/json")
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(replayResponse); err != nil {
+		http.Error(w, "Error encoding response: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 }
 

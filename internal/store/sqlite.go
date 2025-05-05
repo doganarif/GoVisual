@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sync"
 
 	"github.com/doganarif/govisual/internal/model"
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	// Don't import and register SQLite driver automatically
+	// _ "github.com/ncruces/go-sqlite3/driver"
+	// _ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // SQLiteStore implements the Store interface with SQLite as backend
@@ -17,6 +19,30 @@ type SQLiteStore struct {
 	db        *sql.DB
 	tableName string
 	capacity  int
+	// Add a flag to track if we own the connection
+	ownsConnection bool
+}
+
+// RegisterSQLiteDriver registers the SQLite driver with database/sql
+// This should only be called if you don't already have a SQLite driver registered
+var registerOnce sync.Once
+var registerError error
+
+func RegisterSQLiteDriver() error {
+	registerOnce.Do(func() {
+		// Dynamically import and register
+		// Attempt to import the SQLite driver
+		registerError = initSQLiteDriver()
+	})
+	return registerError
+}
+
+// initSQLiteDriver is a helper function that actually initializes the driver
+func initSQLiteDriver() error {
+	// We're not directly importing the driver to avoid auto-registration
+	// Your application should use its preferred SQLite driver
+	// This should only be called if you don't already have a SQLite driver
+	return fmt.Errorf("you need to register a SQLite driver or use WithSQLiteStorageDB with an existing database connection")
 }
 
 // isValidTableName checks if a table name contains only alphanumeric and underscore characters
@@ -48,14 +74,50 @@ func NewSQLiteStore(dbPath, tableName string, capacity int) (*SQLiteStore, error
 	}
 
 	store := &SQLiteStore{
-		db:        db,
-		tableName: tableName,
-		capacity:  capacity,
+		db:             db,
+		tableName:      tableName,
+		capacity:       capacity,
+		ownsConnection: true,
 	}
 
 	// Create the table if it doesn't exist
 	if err := store.createTable(); err != nil {
 		db.Close()
+		return nil, fmt.Errorf("failed to create table: %w", err)
+	}
+
+	return store, nil
+}
+
+// NewSQLiteStoreWithDB creates a new SQLite store with an existing database connection
+func NewSQLiteStoreWithDB(db *sql.DB, tableName string, capacity int) (*SQLiteStore, error) {
+	if db == nil {
+		return nil, fmt.Errorf("database connection cannot be nil")
+	}
+
+	if capacity <= 0 {
+		capacity = 100
+	}
+
+	// Validate table name to prevent SQL injection
+	if !isValidTableName(tableName) {
+		return nil, fmt.Errorf("invalid table name: table name can only contain letters, numbers, and underscores")
+	}
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping SQLite DB: %w", err)
+	}
+
+	store := &SQLiteStore{
+		db:             db,
+		tableName:      tableName,
+		capacity:       capacity,
+		ownsConnection: false,
+	}
+
+	// Create the table if it doesn't exist
+	if err := store.createTable(); err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
@@ -339,5 +401,9 @@ func (s *SQLiteStore) Clear() error {
 
 // Close closes the database connection
 func (s *SQLiteStore) Close() error {
-	return s.db.Close()
+	// Only close the connection if we own it
+	if s.ownsConnection {
+		return s.db.Close()
+	}
+	return nil
 }

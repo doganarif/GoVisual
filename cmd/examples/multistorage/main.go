@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual"
+	_ "github.com/mattn/go-sqlite3" // Import your preferred SQLite driver
 )
 
 func main() {
@@ -67,6 +69,37 @@ func main() {
 
 		opts = append(opts, govisual.WithSQLiteStorage(connStr, tableName))
 		log.Printf("Using SQLite storage with table: %s", tableName)
+
+	case "sqlite_with_db":
+		// This approach avoids SQLite driver registration conflicts
+		// by using an existing database connection
+
+		connStr := os.Getenv("GOVISUAL_SQLITE_DBPATH")
+		if connStr == "" {
+			log.Fatal("SQLite database path not provided in GOVISUAL_SQLITE_DBPATH")
+		}
+
+		tableName := os.Getenv("GOVISUAL_SQLITE_TABLE")
+		if tableName == "" {
+			tableName = "govisual_requests"
+		}
+
+		// Create a database connection using your preferred SQLite driver
+		// Note: This example uses github.com/mattn/go-sqlite3 but you can use any driver
+		db, err := sql.Open("sqlite3", connStr)
+		if err != nil {
+			log.Fatalf("Failed to open SQLite database: %v", err)
+		}
+		defer db.Close()
+
+		// Test the connection
+		if err := db.Ping(); err != nil {
+			log.Fatalf("Failed to connect to SQLite database: %v", err)
+		}
+
+		// Pass the existing connection to govisual
+		opts = append(opts, govisual.WithSQLiteStorageDB(db, tableName))
+		log.Printf("Using SQLite storage with existing connection and table: %s", tableName)
 
 	default:
 		// Default to memory storage
