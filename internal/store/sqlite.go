@@ -388,7 +388,7 @@ func (s *SQLiteStore) queryLogs(query string, args ...interface{}) []*model.Requ
 	return logs
 }
 
-//Clear removes all logs from the store
+// Clear removes all logs from the store
 func (s *SQLiteStore) Clear() error {
 	query := fmt.Sprintf("DELETE FROM %s", s.tableName)
 	_, err := s.db.Exec(query)
