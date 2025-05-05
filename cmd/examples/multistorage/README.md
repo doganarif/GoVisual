@@ -56,7 +56,6 @@ environment:
   - GOVISUAL_STORAGE_TYPE=sqlite
   - GOVISUAL_SQLITE_DBPATH=/data/govisual.db
   - GOVISUAL_SQLITE_TABLE=govisual_requests
-  # No additional environment variables needed for SQLite storage
 ```
 
 ## Accessing the Application
