@@ -48,6 +48,16 @@ environment:
   - GOVISUAL_REDIS_TTL=86400
 ```
 
+### Using SQLite Storage
+
+```yaml
+environment:
+  - PORT=8080
+  - GOVISUAL_STORAGE_TYPE=sqlite
+  - GOVISUAL_SQLITE_DBPATH=/data/govisual.db
+  - GOVISUAL_SQLITE_TABLE=govisual_requests
+```
+
 ## Accessing the Application
 
 Once the application is running, you can access it at:

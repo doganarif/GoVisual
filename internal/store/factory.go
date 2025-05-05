@@ -16,6 +16,9 @@ const (
 
 	// StorageTypeRedis represents Redis storage
 	StorageTypeRedis StorageType = "redis"
+
+	// StorageTypeSQLite represents SQLite storage
+	StorageTypeSQLite StorageType = "sqlite"
 )
 
 // StorageConfig represents configuration options for storage backends
@@ -47,6 +50,9 @@ func NewStore(config *StorageConfig) (Store, error) {
 
 	case StorageTypeRedis:
 		return NewRedisStore(config.ConnectionString, config.Capacity, config.TTL)
+
+	case StorageTypeSQLite:
+		return NewSQLiteStore(config.ConnectionString, config.TableName, config.Capacity)
 
 	default:
 		return nil, fmt.Errorf("unknown storage type: %s", config.Type)
