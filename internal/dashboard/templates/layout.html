@@ -632,6 +632,189 @@
                 width: calc(100% - 60px);
             }
         }
+
+        /* Add styles for request comparison */
+        .compare-panel {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 250px;
+            right: 0;
+            max-height: 80vh; /* Limit height to 80% of viewport */
+            background-color: var(--card-bg-color);
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            padding: 15px;
+            border-top: 3px solid var(--primary-color);
+            transition: transform 0.3s ease;
+            transform: translateY(100%);
+            overflow-y: auto; /* Enable vertical scrolling */
+        }
+
+        .compare-panel.active {
+            transform: translateY(0);
+        }
+
+        /* Add styles to make comparison content scrollable */
+        #comparisonResults {
+            max-height: 60vh;
+            overflow-y: auto;
+            padding-right: 5px; /* Prevent content from touching scrollbar */
+        }
+
+        .compare-column-content {
+            padding: 15px;
+            max-height: 50vh;
+            overflow-y: auto;
+        }
+
+        .compare-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .compare-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .compare-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .compare-selected {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+
+        .compare-item {
+            background-color: var(--background-color);
+            border-radius: 4px;
+            padding: 6px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            border: 1px solid var(--border-color);
+        }
+
+        .remove-item {
+            cursor: pointer;
+            color: var(--danger-color);
+            font-weight: bold;
+        }
+
+        .compare-section {
+            display: none;
+            padding: 20px;
+        }
+
+        .compare-section.active {
+            display: block;
+        }
+
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .compare-column {
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .compare-column-header {
+            background-color: rgba(52, 152, 219, 0.1);
+            padding: 10px 15px;
+            font-weight: bold;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+        }
+
+        .compare-detail-row {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 14px;
+        }
+
+        .compare-detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .compare-detail-label {
+            font-weight: bold;
+            margin-bottom: 4px;
+            color: var(--text-muted);
+        }
+
+        .compare-detail-value {
+            word-break: break-word;
+        }
+
+        .diff-highlight {
+            background-color: rgba(231, 76, 60, 0.1);
+            border-radius: 2px;
+        }
+
+        .diff-add {
+            background-color: rgba(46, 204, 113, 0.1);
+            border-radius: 2px;
+        }
+        
+        .diff-compare-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: var(--primary-color);
+            color: white;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            transition: background-color 0.3s;
+            z-index: 50;
+            opacity: 0;
+            transform: scale(0);
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        
+        .diff-compare-btn.active {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        /* Selected row for comparison */
+        tr.selected-for-comparison {
+            background-color: rgba(52, 152, 219, 0.15) !important;
+        }
+
+        tr.selected-for-comparison td:first-child {
+            border-left: 3px solid var(--primary-color);
+        }
+
+        /* Request checkbox styles */
+        .request-checkbox-container {
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        .request-checkbox {
+            cursor: pointer;
+        }
     </style>
     {{block "head" .}}{{end}}
 </head>
@@ -661,6 +844,31 @@
         {{template "env-info" .}}
     </section>
 </main>
+
+{{block "content" .}}{{end}}
+
+    <!-- Request Comparison Button -->
+    <div id="diff-compare-btn" class="diff-compare-btn">
+        <span>&plus;</span>
+    </div>
+
+    <!-- Request Comparison Panel -->
+    <div id="comparePanel" class="compare-panel">
+        <div class="compare-header">
+            <div class="compare-title">Compare Requests</div>
+            <div class="compare-actions">
+                <button id="closeCompare" class="btn btn-secondary">Close</button>
+                <button id="runComparison" class="btn">Compare</button>
+            </div>
+        </div>
+        <div class="compare-selected" id="selectedRequestsList">
+            <!-- Selected requests will be listed here -->
+            <div class="compare-placeholder">Select 2 or more requests to compare</div>
+        </div>
+        <div id="comparisonResults" class="comparison-grid">
+            <!-- Comparison results will be displayed here -->
+        </div>
+    </div>
 
 {{block "scripts" .}}{{end}}
 <script>

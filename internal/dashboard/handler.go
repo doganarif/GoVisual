@@ -44,6 +44,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/clear":
 		h.handleClearRequests(w, r)
 		return
+	case "/api/compare":
+		h.handleCompareRequests(w, r)
+		return
 	case "/":
 		h.handleDashboard(w, r)
 		return
@@ -154,6 +157,37 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// handleCompareRequests serves the JSON API for comparing specific requests
+func (h *Handler) handleCompareRequests(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Get request IDs from query parameters
+	ids := r.URL.Query()["id"]
+	if len(ids) < 2 {
+		http.Error(w, "At least two request IDs are required", http.StatusBadRequest)
+		return
+	}
+
+	// Get all requests
+	allRequests := h.store.GetAll()
+
+	// Filter requests by IDs
+	compareRequests := []interface{}{}
+	for _, req := range allRequests {
+		for _, id := range ids {
+			if req.ID == id {
+				compareRequests = append(compareRequests, req)
+				break
+			}
+		}
+	}
+
+	// Return the filtered requests
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	encoder.Encode(compareRequests)
 }
 
 // isSensitiveEnvVar returns true if the environment variable key is considered sensitive
