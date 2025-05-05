@@ -228,7 +228,7 @@ func (s *RedisStore) getLogs(ids []string) []*model.RequestLog {
 	return logs
 }
 
-// It can be improved by using limited batch size for deletion to avoid large memory usage
+// Clear removes all logs from the store
 func (s *RedisStore) Clear() error {
 	// Get all log IDs
 	ids, err := s.client.ZRange(s.ctx, s.keyPrefix+"logs", 0, -1).Result()
