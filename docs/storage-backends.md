@@ -113,6 +113,62 @@ The Redis adapter uses the following storage structure:
 - A sorted set named `govisual:logs` is used to maintain order by timestamp
 - All keys automatically expire based on the configured TTL
 
+### SQLite Storage
+
+For lightweight, persistent local storage, you can use SQLite. This requires the github.com/ncruces/go-sqlite3 package.
+
+```go
+handler := govisual.Wrap(
+    mux,
+    govisual.WithSQLiteStorage(
+        "./govisual.db",      // Path to the SQLite database file
+        "govisual_requests",  // Table name (created automatically if it doesn't exist)
+    ),
+)
+```
+
+**Pros:**
+
+- Persistent local storage with no external server required
+- Zero configuration: just a .db file
+- Great for development, testing, and embedded environments
+- SQL querying capabilities
+
+**Cons:**
+
+- Not recommended for high concurrency or large-scale production use
+- Less scalable than PostgreSQL or Redis
+- Database file can grow quickly under heavy usage
+
+**Schema:**
+
+The SQLite adapter automatically creates a table with the following schema:
+
+```sql
+CREATE TABLE IF NOT EXISTS govisual_requests (
+    id TEXT PRIMARY KEY,
+    timestamp DATETIME,
+    method TEXT,
+    path TEXT,
+    query TEXT,
+    request_headers TEXT,
+    response_headers TEXT,
+    status_code INTEGER,
+    duration INTEGER,
+    request_body TEXT,
+    response_body TEXT,
+    error TEXT,
+    middleware_trace TEXT,
+    route_trace TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+```
+
+**Summary of usage:**
+
+- **For local persistence and simplicity**: SQLite is a great choice.
+- **For environments without external dependencies**: Just point to a .db file and use.
+
 ## Choosing a Storage Backend
 
 Here are some guidelines for choosing the appropriate storage backend:

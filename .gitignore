@@ -12,6 +12,7 @@
 *.exe
 .*.swp
 core
+*.db
 *.cgo*.go
 *.cgo*.c
 _cgo_*
