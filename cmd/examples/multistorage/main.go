@@ -65,8 +65,6 @@ func main() {
 			tableName = "govisual_requests"
 		}
 
-		// Note: SQLite does not require a connection string like PostgreSQL or Redis
-		// It uses a file path for the database
 		opts = append(opts, govisual.WithSQLiteStorage(connStr, tableName))
 		log.Printf("Using SQLite storage with table: %s", tableName)
 
