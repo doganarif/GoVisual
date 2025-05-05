@@ -25,8 +25,27 @@
             const data = JSON.parse(event.data);
             allRequests = data;
             applyFilters(); // This will update filteredRequests
+            
+            // Save current checkbox states before updating table
+            const selectedCheckboxes = {};
+            document.querySelectorAll('.request-checkbox').forEach(checkbox => {
+                if (checkbox.checked) {
+                    selectedCheckboxes[checkbox.getAttribute('data-id')] = true;
+                }
+            });
+            
             updateTable(filteredRequests);
             updateStats(filteredRequests);
+            
+            // Restore checkbox states
+            requestAnimationFrame(() => {
+                document.querySelectorAll('.request-checkbox').forEach(checkbox => {
+                    const id = checkbox.getAttribute('data-id');
+                    if (selectedCheckboxes[id]) {
+                        checkbox.checked = true;
+                    }
+                });
+            });
 
             // If details are open, refresh them
             if (
@@ -219,7 +238,14 @@
         sortedRequests.forEach((req) => {
             const row = document.createElement("tr");
             row.setAttribute("data-id", req.ID);
-            row.addEventListener("click", () => {
+            row.addEventListener("click", function(e) {
+                // Don't navigate if clicking on a checkbox or its container
+                if (e.target.classList.contains('request-checkbox') || 
+                    e.target.classList.contains('request-checkbox-container') ||
+                    e.target.closest('.request-checkbox-container')) {
+                    return;
+                }
+                
                 // Navigate to request details section and show details
                 document.querySelector('[data-target="requests-section"]').click();
                 showRequestDetails(req);
@@ -573,5 +599,607 @@
 
     // Set up periodic memory usage updates
     setInterval(updateMemoryUsage, 5000);
+
+    // Request comparison functionality
+    let selectedRequests = [];
+    const maxCompareRequests = 2; // Maximum number of requests to compare
+
+    // Add checkbox to request rows for selection
+    function addSelectionToTable() {
+        const rows = document.querySelectorAll("#requestsBody tr");
+        rows.forEach(row => {
+            // Skip rows that don't have data
+            if (!row.hasAttribute("data-id")) {
+                return;
+            }
+
+            // Don't add checkboxes twice
+            if (row.querySelector(".request-checkbox")) {
+                return;
+            }
+
+            const requestId = row.getAttribute("data-id");
+            const firstCell = row.querySelector("td:first-child");
+            
+            // Create checkbox container
+            const checkboxContainer = document.createElement("div");
+            checkboxContainer.style.display = "inline-block";
+            checkboxContainer.style.marginRight = "10px";
+            checkboxContainer.className = "request-checkbox-container";
+            
+            // Prevent event bubbling for the container
+            checkboxContainer.addEventListener("click", function(e) {
+                e.stopPropagation();
+            });
+            
+            // Create checkbox
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.className = "request-checkbox";
+            checkbox.setAttribute("data-id", requestId);
+            
+            // Check if this request is already in selectedRequests
+            if (selectedRequests.includes(requestId)) {
+                checkbox.checked = true;
+                row.classList.add("selected-for-comparison");
+            }
+            
+            // Handle checkbox events
+            checkbox.addEventListener("click", function(e) {
+                e.stopPropagation(); // This is critical - stop click from bubbling to parent row
+            });
+            
+            checkbox.addEventListener("change", function(e) {
+                e.stopPropagation();
+                toggleRequestSelection(requestId);
+            });
+            
+            // Add to DOM
+            checkboxContainer.appendChild(checkbox);
+            firstCell.insertBefore(checkboxContainer, firstCell.firstChild);
+        });
+    }
+
+    // Toggle request selection
+    function toggleRequestSelection(requestId) {
+        const index = selectedRequests.indexOf(requestId);
+        const row = document.querySelector(`tr[data-id="${requestId}"]`);
+        
+        if (index === -1) {
+            // Add to selection if not already at maximum
+            if (selectedRequests.length < maxCompareRequests) {
+                selectedRequests.push(requestId);
+                addToSelectedList(requestId);
+                if (row) row.classList.add("selected-for-comparison");
+            } else {
+                alert(`Maximum of ${maxCompareRequests} requests can be compared at once.`);
+                // Uncheck the checkbox
+                document.querySelector(`.request-checkbox[data-id="${requestId}"]`).checked = false;
+                return;
+            }
+        } else {
+            // Remove from selection
+            selectedRequests.splice(index, 1);
+            removeFromSelectedList(requestId);
+            if (row) row.classList.remove("selected-for-comparison");
+        }
+        
+        updateCompareButton();
+    }
+
+    // Add request to the selected list
+    function addToSelectedList(requestId) {
+        const selectedList = document.getElementById("selectedRequestsList");
+        const placeholder = document.querySelector(".compare-placeholder");
+        
+        if (placeholder) {
+            placeholder.remove();
+        }
+        
+        // Find the request in allRequests
+        const request = allRequests.find(req => req.ID === requestId);
+        if (!request) return;
+        
+        const item = document.createElement("div");
+        item.className = "compare-item";
+        item.setAttribute("data-id", requestId);
+        item.innerHTML = `
+            <span>${request.Method} ${request.Path}</span>
+            <span class="remove-item" data-id="${requestId}">&times;</span>
+        `;
+        
+        item.querySelector(".remove-item").addEventListener("click", function() {
+            const id = this.getAttribute("data-id");
+            // Uncheck the checkbox
+            const checkbox = document.querySelector(`.request-checkbox[data-id="${id}"]`);
+            if (checkbox) checkbox.checked = false;
+            toggleRequestSelection(id);
+        });
+        
+        selectedList.appendChild(item);
+    }
+
+    // Remove request from the selected list
+    function removeFromSelectedList(requestId) {
+        const item = document.querySelector(`.compare-item[data-id="${requestId}"]`);
+        if (item) {
+            item.remove();
+        }
+        
+        // Show placeholder if no items left
+        const selectedList = document.getElementById("selectedRequestsList");
+        if (selectedList.children.length === 0) {
+            const placeholder = document.createElement("div");
+            placeholder.className = "compare-placeholder";
+            placeholder.textContent = "Select 2 or more requests to compare";
+            selectedList.appendChild(placeholder);
+        }
+    }
+
+    // Update the compare button visibility
+    function updateCompareButton() {
+        const compareBtn = document.getElementById("diff-compare-btn");
+        
+        if (selectedRequests.length >= 2) {
+            compareBtn.classList.add("active");
+            document.getElementById("comparePanel").style.display = "block";
+        } else {
+            compareBtn.classList.remove("active");
+        }
+    }
+
+    // Run the comparison
+    function runComparison() {
+        if (selectedRequests.length < 2) {
+            alert("Please select at least 2 requests to compare.");
+            return;
+        }
+        
+        // Build query string with selected request IDs
+        const queryString = selectedRequests.map(id => `id=${id}`).join("&");
+        
+        // Fetch comparison data
+        fetch(`/__viz/api/compare?${queryString}`)
+            .then(response => response.json())
+            .then(requests => {
+                displayComparison(requests);
+            })
+            .catch(error => {
+                console.error("Error fetching comparison data:", error);
+                alert("An error occurred while fetching comparison data.");
+            });
+    }
+
+    // Display the comparison
+    function displayComparison(requests) {
+        const resultsContainer = document.getElementById("comparisonResults");
+        resultsContainer.innerHTML = "";
+        
+        if (requests.length < 2) {
+            resultsContainer.innerHTML = "<p>Not enough requests for comparison.</p>";
+            return;
+        }
+        
+        // Check if we have potentially related routes (same pattern with different parameters)
+        const routePatterns = detectRoutePatterns(requests);
+        const hasRelatedRoutes = Object.keys(routePatterns).length > 0;
+        
+        // Create a column for each request
+        requests.forEach((request, index) => {
+            const column = document.createElement("div");
+            column.className = "compare-column";
+            
+            // Column header
+            const header = document.createElement("div");
+            header.className = "compare-column-header";
+            header.textContent = `${request.Method} ${request.Path}`;
+            if (index === 0) {
+                header.textContent += " (Base for comparison)";
+            }
+            column.appendChild(header);
+            
+            // Column content
+            const content = document.createElement("div");
+            content.className = "compare-column-content";
+            
+            // Add basic details
+            addCompareDetailRow(content, "ID", request.ID);
+            addCompareDetailRow(content, "Method", request.Method);
+            addCompareDetailRow(content, "Path", request.Path);
+            
+            // Add route pattern information if available
+            if (hasRelatedRoutes) {
+                const patternKey = findPatternForRequest(routePatterns, request.Path);
+                if (patternKey) {
+                    const pattern = routePatterns[patternKey].pattern;
+                    const params = extractRouteParams(pattern, request.Path);
+                    
+                    if (pattern) {
+                        addCompareDetailRow(content, "Route Pattern", pattern);
+                    }
+                    
+                    if (params && Object.keys(params).length > 0) {
+                        let paramsText = "";
+                        for (const [key, value] of Object.entries(params)) {
+                            paramsText += `${key}: ${value}\n`;
+                        }
+                        addCompareDetailRow(content, "Route Parameters", paramsText);
+                    }
+                }
+            }
+            
+            // Continue with other details
+            addCompareDetailRow(content, "Status", request.StatusCode);
+            addCompareDetailRow(content, "Time", `${request.Duration} ms`);
+            addCompareDetailRow(content, "Timestamp", new Date(request.Timestamp).toLocaleString());
+            
+            // Add request headers
+            if (request.RequestHeaders) {
+                if (index === 0 || !requests[0].RequestHeaders) {
+                    addCompareDetailRow(content, "Request Headers", formatHeaders(request.RequestHeaders));
+                } else {
+                    // Compare with first request's headers
+                    addCompareDetailRow(
+                        content, 
+                        "Request Headers", 
+                        compareHeaders(requests[0].RequestHeaders, request.RequestHeaders)
+                    );
+                }
+            }
+            
+            // Add response headers
+            if (request.ResponseHeaders) {
+                if (index === 0 || !requests[0].ResponseHeaders) {
+                    addCompareDetailRow(content, "Response Headers", formatHeaders(request.ResponseHeaders));
+                } else {
+                    // Compare with first request's headers
+                    addCompareDetailRow(
+                        content, 
+                        "Response Headers", 
+                        compareHeaders(requests[0].ResponseHeaders, request.ResponseHeaders)
+                    );
+                }
+            }
+            
+            // Add request body with JSON diff if possible
+            if (request.RequestBody) {
+                if (index === 0 || !requests[0].RequestBody) {
+                    addCompareDetailRow(content, "Request Body", formatBody(request.RequestBody));
+                } else {
+                    try {
+                        // Try to parse as JSON for diff
+                        const baseJson = JSON.parse(requests[0].RequestBody);
+                        const currentJson = JSON.parse(request.RequestBody);
+                        addCompareDetailRow(
+                            content,
+                            "Request Body (with diffs)",
+                            formatJsonDiff(baseJson, currentJson)
+                        );
+                    } catch (e) {
+                        // Fall back to regular display if not valid JSON
+                        addCompareDetailRow(content, "Request Body", formatBody(request.RequestBody));
+                    }
+                }
+            }
+            
+            // Add response body with JSON diff if possible
+            if (request.ResponseBody) {
+                if (index === 0 || !requests[0].ResponseBody) {
+                    addCompareDetailRow(content, "Response Body", formatBody(request.ResponseBody));
+                } else {
+                    try {
+                        // Try to parse as JSON for diff
+                        const baseJson = JSON.parse(requests[0].ResponseBody);
+                        const currentJson = JSON.parse(request.ResponseBody);
+                        addCompareDetailRow(
+                            content,
+                            "Response Body (with diffs)",
+                            formatJsonDiff(baseJson, currentJson)
+                        );
+                    } catch (e) {
+                        // Fall back to regular display if not valid JSON
+                        addCompareDetailRow(content, "Response Body", formatBody(request.ResponseBody));
+                    }
+                }
+            }
+            
+            column.appendChild(content);
+            resultsContainer.appendChild(column);
+        });
+        
+        // Show the comparison panel
+        document.getElementById("comparePanel").classList.add("active");
+    }
+
+    // Compare headers and highlight differences
+    function compareHeaders(baseHeaders, compareHeaders) {
+        let result = "";
+        const allKeys = new Set();
+        
+        // Collect all keys from both objects
+        for (const key in baseHeaders) allKeys.add(key);
+        for (const key in compareHeaders) allKeys.add(key);
+        
+        // Sort keys alphabetically
+        const sortedKeys = Array.from(allKeys).sort();
+        
+        sortedKeys.forEach(key => {
+            const baseValue = baseHeaders[key] ? baseHeaders[key].join(", ") : undefined;
+            const compareValue = compareHeaders[key] ? compareHeaders[key].join(", ") : undefined;
+            
+            if (!baseValue) {
+                // New header in the comparison
+                result += `<span class="diff-add">${key}: ${compareValue}</span>\n`;
+            } else if (!compareValue) {
+                // Header removed in the comparison
+                result += `${key}: [removed]\n`;
+            } else if (baseValue !== compareValue) {
+                // Header value changed
+                result += `${key}: <span class="diff-highlight">${compareValue}</span>\n`;
+            } else {
+                // Same value
+                result += `${key}: ${compareValue}\n`;
+            }
+        });
+        
+        return result;
+    }
+
+    // Format JSON diff
+    function formatJsonDiff(baseJson, compareJson, path = "") {
+        let output = "";
+        
+        if (Array.isArray(baseJson) && Array.isArray(compareJson)) {
+            // Handle arrays
+            const maxLength = Math.max(baseJson.length, compareJson.length);
+            
+            output += "[\n";
+            for (let i = 0; i < maxLength; i++) {
+                const currentPath = path ? `${path}[${i}]` : `[${i}]`;
+                const indent = "  ".repeat(currentPath.split(/[\[\].]+/).length);
+                
+                if (i < baseJson.length && i < compareJson.length) {
+                    // Both arrays have this index
+                    output += indent;
+                    if (typeof baseJson[i] === "object" && baseJson[i] !== null &&
+                        typeof compareJson[i] === "object" && compareJson[i] !== null) {
+                        // Both are objects, recursively diff
+                        output += formatJsonDiff(baseJson[i], compareJson[i], currentPath);
+                    } else if (baseJson[i] !== compareJson[i]) {
+                        // Primitive values that differ
+                        output += `<span class="diff-highlight">${JSON.stringify(compareJson[i])}</span>`;
+                    } else {
+                        // Same values
+                        output += JSON.stringify(compareJson[i]);
+                    }
+                } else if (i >= baseJson.length) {
+                    // Item only in compareJson
+                    output += indent + `<span class="diff-add">${JSON.stringify(compareJson[i])}</span>`;
+                } else {
+                    // Item in baseJson but not in compareJson
+                    output += indent + `[removed]`;
+                }
+                
+                if (i < maxLength - 1) {
+                    output += ",";
+                }
+                output += "\n";
+            }
+            output += "  ".repeat((path.split(/[\[\].]+/).length - 1)) + "]";
+            
+        } else if (typeof baseJson === "object" && baseJson !== null &&
+                   typeof compareJson === "object" && compareJson !== null) {
+            // Handle objects
+            const allKeys = new Set();
+            Object.keys(baseJson).forEach(key => allKeys.add(key));
+            Object.keys(compareJson).forEach(key => allKeys.add(key));
+            
+            const sortedKeys = Array.from(allKeys).sort();
+            
+            output += "{\n";
+            sortedKeys.forEach((key, index) => {
+                const currentPath = path ? `${path}.${key}` : key;
+                const indent = "  ".repeat(currentPath.split(/[\[\].]+/).length);
+                
+                output += indent + `"${key}": `;
+                
+                if (key in baseJson && key in compareJson) {
+                    // Key in both objects
+                    if (typeof baseJson[key] === "object" && baseJson[key] !== null &&
+                        typeof compareJson[key] === "object" && compareJson[key] !== null) {
+                        // Both are objects, recursively diff
+                        output += formatJsonDiff(baseJson[key], compareJson[key], currentPath);
+                    } else if (baseJson[key] !== compareJson[key]) {
+                        // Primitive values that differ
+                        output += `<span class="diff-highlight">${JSON.stringify(compareJson[key])}</span>`;
+                    } else {
+                        // Same values
+                        output += JSON.stringify(compareJson[key]);
+                    }
+                } else if (!(key in baseJson)) {
+                    // Key only in compareJson
+                    output += `<span class="diff-add">${JSON.stringify(compareJson[key])}</span>`;
+                } else {
+                    // Key in baseJson but not in compareJson
+                    output += `[removed]`;
+                }
+                
+                if (index < sortedKeys.length - 1) {
+                    output += ",";
+                }
+                output += "\n";
+            });
+            output += "  ".repeat((path.split(/[\[\].]+/).length - 1)) + "}";
+            
+        } else {
+            // Handle primitive values
+            if (baseJson !== compareJson) {
+                output += `<span class="diff-highlight">${JSON.stringify(compareJson)}</span>`;
+            } else {
+                output += JSON.stringify(compareJson);
+            }
+        }
+        
+        return output;
+    }
+
+    // Add a detail row to the comparison
+    function addCompareDetailRow(container, label, value) {
+        const row = document.createElement("div");
+        row.className = "compare-detail-row";
+        
+        const labelElement = document.createElement("div");
+        labelElement.className = "compare-detail-label";
+        labelElement.textContent = label;
+        
+        const valueElement = document.createElement("div");
+        valueElement.className = "compare-detail-value";
+        
+        if (typeof value === "string") {
+            // Check if value contains HTML for diff highlighting
+            if (value.includes("<span class=")) {
+                if (value.includes("\n")) {
+                    // Multiline HTML content
+                    const pre = document.createElement("pre");
+                    pre.innerHTML = value;
+                    valueElement.appendChild(pre);
+                } else {
+                    // Single line HTML content
+                    valueElement.innerHTML = value;
+                }
+            } else if (value.includes("\n")) {
+                // Regular multiline text, use pre element
+                const pre = document.createElement("pre");
+                pre.textContent = value;
+                valueElement.appendChild(pre);
+            } else {
+                // Regular single line text
+                valueElement.textContent = value;
+            }
+        } else {
+            valueElement.textContent = value;
+        }
+        
+        row.appendChild(labelElement);
+        row.appendChild(valueElement);
+        container.appendChild(row);
+    }
+
+    // Event Listeners
+    document.getElementById("diff-compare-btn").addEventListener("click", function() {
+        document.getElementById("comparePanel").classList.add("active");
+    });
+    
+    document.getElementById("closeCompare").addEventListener("click", function() {
+        document.getElementById("comparePanel").classList.remove("active");
+    });
+    
+    document.getElementById("runComparison").addEventListener("click", runComparison);
+
+    // Initialize comparison UI
+    function initComparisonUI() {
+        addSelectionToTable();
+    }
+
+    // Call initialization after table updates
+    const originalUpdateTable = updateTable;
+    updateTable = function(requests) {
+        originalUpdateTable(requests);
+        initComparisonUI();
+    };
+    
+    // Initialize on page load
+    initComparisonUI();
+
+    // Detect route patterns in the requests
+    function detectRoutePatterns(requests) {
+        const patterns = {};
+        
+        // Example path patterns to detect:
+        // /api/users/123 and /api/users/456 => /api/users/:id
+        // /api/products/electronics/tv and /api/products/furniture/chair => /api/products/:category/:item
+        
+        // Simple rule-based pattern detection - this could be improved with more sophisticated algorithms
+        requests.forEach(req => {
+            const path = req.Path;
+            const segments = path.split('/').filter(Boolean);
+            
+            // Look for numeric segments (likely IDs)
+            for (let i = 0; i < segments.length; i++) {
+                if (/^\d+$/.test(segments[i])) {
+                    // Create a pattern with this segment replaced by :id
+                    const patternSegments = [...segments];
+                    patternSegments[i] = ":id";
+                    const pattern = '/' + patternSegments.join('/');
+                    
+                    // Store the pattern
+                    if (!patterns[pattern]) {
+                        patterns[pattern] = {
+                            pattern: pattern,
+                            paths: []
+                        };
+                    }
+                    
+                    patterns[pattern].paths.push(path);
+                    break; // Only detect one parameter per path for now
+                }
+                
+                // Look for UUID-like segments
+                if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segments[i])) {
+                    // Create a pattern with this segment replaced by :uuid
+                    const patternSegments = [...segments];
+                    patternSegments[i] = ":uuid";
+                    const pattern = '/' + patternSegments.join('/');
+                    
+                    // Store the pattern
+                    if (!patterns[pattern]) {
+                        patterns[pattern] = {
+                            pattern: pattern,
+                            paths: []
+                        };
+                    }
+                    
+                    patterns[pattern].paths.push(path);
+                    break;
+                }
+            }
+        });
+        
+        // Only return patterns that match multiple paths
+        return Object.fromEntries(
+            Object.entries(patterns).filter(([_, value]) => value.paths.length > 1)
+        );
+    }
+    
+    // Find the pattern for a specific request path
+    function findPatternForRequest(patterns, path) {
+        for (const [patternKey, patternData] of Object.entries(patterns)) {
+            if (patternData.paths.includes(path)) {
+                return patternKey;
+            }
+        }
+        return null;
+    }
+    
+    // Extract route parameters from a path based on a pattern
+    function extractRouteParams(pattern, path) {
+        const patternSegments = pattern.split('/').filter(Boolean);
+        const pathSegments = path.split('/').filter(Boolean);
+        
+        if (patternSegments.length !== pathSegments.length) {
+            return null;
+        }
+        
+        const params = {};
+        
+        for (let i = 0; i < patternSegments.length; i++) {
+            if (patternSegments[i].startsWith(':')) {
+                const paramName = patternSegments[i].substring(1);
+                params[paramName] = pathSegments[i];
+            }
+        }
+        
+        return params;
+    }
 </script>
 {{end}}
