@@ -88,8 +88,8 @@ func (s *InMemoryStore) GetLatest(n int) []*model.RequestLog {
 
 // Clear clears all stored request logs
 func (s *InMemoryStore) Clear() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	if s.size == 0 {
 		return nil
