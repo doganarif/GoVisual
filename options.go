@@ -122,6 +122,15 @@ func WithPostgresStorage(connStr string, tableName string) Option {
 	}
 }
 
+// WithSQLiteStorage configures the application to use SQLite storage
+func WithSQLiteStorage(dbPath string, tableName string) Option {
+	return func(c *Config) {
+		c.StorageType = store.StorageTypeSQLite
+		c.ConnectionString = dbPath
+		c.TableName = tableName
+	}
+}
+
 // WithRedisStorage configures the application to use Redis storage
 func WithRedisStorage(connStr string, ttlSeconds int) Option {
 	return func(c *Config) {

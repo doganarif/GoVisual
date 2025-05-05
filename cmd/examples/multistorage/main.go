@@ -54,6 +54,22 @@ func main() {
 		opts = append(opts, govisual.WithRedisStorage(connStr, ttl))
 		log.Printf("Using Redis storage with TTL: %d seconds", ttl)
 
+	case "sqlite":
+		connStr := os.Getenv("GOVISUAL_SQLITE_DBPATH")
+		if connStr == "" {
+			log.Fatal("SQLite database path not provided in GOVISUAL_SQLITE_DBPATH")
+		}
+
+		tableName := os.Getenv("GOVISUAL_SQLITE_TABLE")
+		if tableName == "" {
+			tableName = "govisual_requests"
+		}
+
+		// Note: SQLite does not require a connection string like PostgreSQL or Redis
+		// It uses a file path for the database
+		opts = append(opts, govisual.WithSQLiteStorage(connStr, tableName))
+		log.Printf("Using SQLite storage with table: %s", tableName)
+
 	default:
 		// Default to memory storage
 		opts = append(opts, govisual.WithMemoryStorage())
