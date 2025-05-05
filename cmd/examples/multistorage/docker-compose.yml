@@ -25,9 +25,9 @@ services:
       # - GOVISUAL_PG_TABLE=govisual_requests
       
       # Use Redis storage
-      # - GOVISUAL_STORAGE_TYPE=redis
-      # - GOVISUAL_REDIS_CONN=redis://redis:6379/0
-      # - GOVISUAL_REDIS_TTL=86400
+      - GOVISUAL_STORAGE_TYPE=redis
+      - GOVISUAL_REDIS_CONN=redis://redis:6379/0
+      - GOVISUAL_REDIS_TTL=86400
     depends_on:
       - postgres
       - redis
