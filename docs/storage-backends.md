@@ -169,6 +169,55 @@ CREATE TABLE IF NOT EXISTS govisual_requests (
 - **For local persistence and simplicity**: SQLite is a great choice.
 - **For environments without external dependencies**: Just point to a .db file and use.
 
+### SQLite with Existing Connection
+
+If your application already uses SQLite with a driver like `github.com/mattn/go-sqlite3`, you may experience a conflict when using govisual's SQLite storage due to multiple driver registrations. To avoid this conflict, you can pass your existing database connection to govisual:
+
+```go
+import (
+    "database/sql"
+
+    "github.com/doganarif/govisual"
+    _ "github.com/mattn/go-sqlite3" // Your preferred SQLite driver
+)
+
+func main() {
+    // Create your own database connection
+    db, err := sql.Open("sqlite3", "./govisual.db")
+    if err != nil {
+        // Handle error
+    }
+    defer db.Close()
+
+    // Pass the existing connection to govisual
+    handler := govisual.Wrap(
+        mux,
+        govisual.WithSQLiteStorageDB(db, "govisual_requests"),
+    )
+
+    // Use the handler
+    http.ListenAndServe(":8080", handler)
+}
+```
+
+**Pros:**
+
+- Avoids "sql: Register called twice for driver sqlite3" panic
+- Allows you to use your preferred SQLite driver
+- Compatible with any existing SQLite connection
+- Share a single connection across your application
+
+**Cons:**
+
+- Requires you to manage the database connection lifecycle
+- You need to ensure your driver is compatible with govisual's requirements
+
+**When to use:**
+
+- When you're already using SQLite elsewhere in your application
+- When you want to avoid driver registration conflicts
+- When you need more control over the database connection
+
 ## Choosing a Storage Backend
 
 Here are some guidelines for choosing the appropriate storage backend:

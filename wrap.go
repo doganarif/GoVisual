@@ -33,6 +33,7 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		ConnectionString: config.ConnectionString,
 		TableName:        config.TableName,
 		TTL:              config.RedisTTL,
+		ExistingDB:       config.ExistingDB,
 	}
 
 	requestStore, err = store.NewStore(storeConfig)
