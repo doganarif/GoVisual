@@ -13,6 +13,9 @@ type Store interface {
 	// GetAll returns all stored request logs
 	GetAll() []*model.RequestLog
 
+	// Clear clears all stored request logs
+	Clear() error
+
 	// GetLatest returns the n most recent request logs
 	GetLatest(n int) []*model.RequestLog
 

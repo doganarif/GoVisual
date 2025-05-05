@@ -86,6 +86,21 @@ func (s *InMemoryStore) GetLatest(n int) []*model.RequestLog {
 	return all[len(all)-n:]
 }
 
+// Clear clears all stored request logs
+func (s *InMemoryStore) Clear() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.size == 0 {
+		return nil
+	}
+
+	s.logs = make([]*model.RequestLog, 0)
+	s.size = 0
+	s.next = 0
+	return nil
+}
+
 // Close implements the Store interface but does nothing for in-memory store
 func (s *InMemoryStore) Close() error {
 	// Nothing to do for in-memory store

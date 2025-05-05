@@ -404,10 +404,10 @@
 
         // Example phases - in a real implementation, this would come from detailed tracing
         const phases = [
-            {name: "Connection", duration: Math.round(duration * 0.05)},
-            {name: "Request Processing", duration: Math.round(duration * 0.15)},
-            {name: "Handler Execution", duration: Math.round(duration * 0.7)},
-            {name: "Response Generation", duration: Math.round(duration * 0.1)},
+            { name: "Connection", duration: Math.round(duration * 0.05) },
+            { name: "Request Processing", duration: Math.round(duration * 0.15) },
+            { name: "Handler Execution", duration: Math.round(duration * 0.7) },
+            { name: "Response Generation", duration: Math.round(duration * 0.1) },
         ];
 
         phases.forEach((phase) => {
@@ -526,19 +526,24 @@
             fetch("/__viz/api/clear", {
                 method: "POST",
             })
-                .then((response) => {
-                    if (response.ok) {
-                        // Clear local data
-                        allRequests = [];
-                        filteredRequests = [];
-                        updateTable(filteredRequests);
-                        updateStats(filteredRequests);
-
-                        // Hide details if open
-                        document.getElementById("requestDetails").style.display = "none";
-                        document.getElementById("traceContainer").style.display = "none";
-                        selectedRequestId = null;
+                .then(async (response) => {
+                    if (!response.ok) {
+                        const errText = await response.text();
+                        // In case of an error, show an alert
+                        alert(errText);
+                        return;
                     }
+
+                    // Clear local data
+                    allRequests = [];
+                    filteredRequests = [];
+                    updateTable(filteredRequests);
+                    updateStats(filteredRequests);
+
+                    // Hide details if open
+                    document.getElementById("requestDetails").style.display = "none";
+                    document.getElementById("traceContainer").style.display = "none";
+                    selectedRequestId = null;
                 })
                 .catch((error) => console.error("Error clearing requests:", error));
         }

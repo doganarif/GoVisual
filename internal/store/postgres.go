@@ -334,6 +334,17 @@ func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.Re
 	return logs
 }
 
+// Clear clears all stored request logs
+func (s *PostgresStore) Clear() error {
+	query := fmt.Sprintf("TRUNCATE TABLE %s", s.tableName)
+	_, err := s.db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("failed to clear logs: %w", err)
+	}
+
+	return nil
+}
+
 // Close closes the database connection
 func (s *PostgresStore) Close() error {
 	return s.db.Close()

@@ -116,9 +116,16 @@ func (h *Handler) handleClearRequests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clear the requests in the store
+	if err := h.store.Clear(); err != nil {
+		http.Error(w, "Error clearing requests", http.StatusInternalServerError)
+		return
+	}
+
 	// In a real implementation, we would clear the store
 	// For now just respond with success
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"success":true}`))
 }
 
