@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 
 	"github.com/doganarif/govisual/internal/model"
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -18,10 +19,21 @@ type SQLiteStore struct {
 	capacity  int
 }
 
+// isValidTableName checks if a table name contains only alphanumeric and underscore characters
+func isValidTableName(tableName string) bool {
+	match, _ := regexp.MatchString(`^[a-zA-Z0-9_]+$`, tableName)
+	return match
+}
+
 // NewSQLiteStore creates a new SQLite-backed store
 func NewSQLiteStore(dbPath, tableName string, capacity int) (*SQLiteStore, error) {
 	if capacity <= 0 {
 		capacity = 100
+	}
+
+	// Validate table name to prevent SQL injection
+	if !isValidTableName(tableName) {
+		return nil, fmt.Errorf("invalid table name: table name can only contain letters, numbers, and underscores")
 	}
 
 	// Connect to the database
@@ -156,7 +168,7 @@ func (s *SQLiteStore) cleanup() {
 		DELETE FROM %s
 		WHERE id IN (
 			SELECT id FROM %s
-			ORDER BY timestamp ASC
+			ORDER BY created_at ASC, timestamp ASC
 			LIMIT ?
 		)
 	`, s.tableName, s.tableName)

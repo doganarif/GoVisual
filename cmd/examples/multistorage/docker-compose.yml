@@ -12,7 +12,12 @@ services:
       # Comment/uncomment the following environment variables to switch storage backends
       
       # Use in-memory storage (default, no env vars needed)
-      # - GOVISUAL_STORAGE_TYPE=memory
+      # - GOVISUAL_STORAGE_TYPE=sqlite
+      #
+      # Use Sqlite
+      # - GOVISUAL_STORAGE_TYPE=sqlite
+      # - GOVISUAL_SQLITE_DBPATH=/data/govisual.db
+      # - GOVISUAL_SQLITE_TABLE=govisual_requests
       
       # Use PostgreSQL storage
       # - GOVISUAL_STORAGE_TYPE=postgres
@@ -20,9 +25,9 @@ services:
       # - GOVISUAL_PG_TABLE=govisual_requests
       
       # Use Redis storage
-      - GOVISUAL_STORAGE_TYPE=redis
-      - GOVISUAL_REDIS_CONN=redis://redis:6379/0
-      - GOVISUAL_REDIS_TTL=86400
+      # - GOVISUAL_STORAGE_TYPE=redis
+      # - GOVISUAL_REDIS_CONN=redis://redis:6379/0
+      # - GOVISUAL_REDIS_TTL=86400
     depends_on:
       - postgres
       - redis
@@ -67,4 +72,4 @@ volumes:
 
 networks:
   govisual-net:
-    driver: bridge 
+    driver: bridge
