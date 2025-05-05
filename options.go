@@ -1,6 +1,7 @@
 package govisual
 
 import (
+	"database/sql"
 	"path/filepath"
 	"strings"
 
@@ -38,6 +39,9 @@ type Config struct {
 
 	// TTL for Redis store in seconds
 	RedisTTL int
+
+	// Existing database connection for SQLite
+	ExistingDB *sql.DB
 }
 
 // Option is a function that modifies the configuration
@@ -127,6 +131,15 @@ func WithSQLiteStorage(dbPath string, tableName string) Option {
 	return func(c *Config) {
 		c.StorageType = store.StorageTypeSQLite
 		c.ConnectionString = dbPath
+		c.TableName = tableName
+	}
+}
+
+// WithSQLiteStorageDB configures the application to use SQLite storage with an existing database connection
+func WithSQLiteStorageDB(db *sql.DB, tableName string) Option {
+	return func(c *Config) {
+		c.StorageType = store.StorageTypeSQLiteWithDB
+		c.ExistingDB = db
 		c.TableName = tableName
 	}
 }

@@ -2,7 +2,6 @@
 
 A lightweight, zero-configuration HTTP request visualizer and debugger for Go web applications during local development.
 
-
 ## Features
 
 - **Real-time Request Monitoring**: Visualize HTTP requests passing through your application
@@ -120,6 +119,52 @@ handler := govisual.Wrap(
     ),
 )
 ```
+
+## SQLite Driver Conflict
+
+If you're already using a SQLite driver in your application (such as `github.com/mattn/go-sqlite3`), you may experience a conflict when using govisual with SQLite storage:
+
+```
+panic: sql: Register called twice for driver sqlite3
+```
+
+This occurs because both your application and govisual try to register the SQLite driver with the same name.
+
+To resolve this issue, you can pass your existing database connection to govisual:
+
+```go
+import (
+    "database/sql"
+
+    "github.com/doganarif/govisual"
+    _ "github.com/mattn/go-sqlite3" // Your preferred SQLite driver
+)
+
+func main() {
+    // Create your own database connection
+    db, err := sql.Open("sqlite3", "path/to/your/database.db")
+    if err != nil {
+        // Handle error
+    }
+    defer db.Close()
+
+    // Pass the existing connection to govisual
+    app := gin.New()
+    visualHandler := govisual.Wrap(
+        app,
+        govisual.WithSQLiteStorageDB(db, "govisual_requests"),
+    )
+
+    // Use visualHandler as your main handler
+    http.ListenAndServe(":8080", visualHandler)
+}
+```
+
+This approach allows you to:
+
+1. Use your preferred SQLite driver
+2. Avoid driver registration conflicts
+3. Reuse your existing connection
 
 ## Examples
 

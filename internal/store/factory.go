@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 )
 
@@ -19,6 +20,9 @@ const (
 
 	// StorageTypeSQLite represents SQLite storage
 	StorageTypeSQLite StorageType = "sqlite"
+
+	// StorageTypeSQLiteWithDB represents SQLite storage with existing connection
+	StorageTypeSQLiteWithDB StorageType = "sqlite_with_db"
 )
 
 // StorageConfig represents configuration options for storage backends
@@ -37,6 +41,9 @@ type StorageConfig struct {
 
 	// TTL is the time-to-live for entries in Redis
 	TTL int
+
+	// ExistingDB is an existing database connection (applicable to StorageTypeSQLiteWithDB)
+	ExistingDB *sql.DB
 }
 
 // NewStore creates a new storage backend based on configuration
@@ -52,7 +59,15 @@ func NewStore(config *StorageConfig) (Store, error) {
 		return NewRedisStore(config.ConnectionString, config.Capacity, config.TTL)
 
 	case StorageTypeSQLite:
+		// The original SQLite store with automatic driver registration
 		return NewSQLiteStore(config.ConnectionString, config.TableName, config.Capacity)
+
+	case StorageTypeSQLiteWithDB:
+		// New SQLite store that accepts an existing DB connection
+		if config.ExistingDB == nil {
+			return nil, fmt.Errorf("existing DB connection is required for sqlite_with_db storage type")
+		}
+		return NewSQLiteStoreWithDB(config.ExistingDB, config.TableName, config.Capacity)
 
 	default:
 		return nil, fmt.Errorf("unknown storage type: %s", config.Type)
