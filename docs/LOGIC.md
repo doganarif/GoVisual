@@ -139,6 +139,7 @@ classDiagram
         +Add(log *RequestLog)
         +Get(id string)
         +GetAll()
+        +Clear()
         +GetLatest(n int)
     }
 
@@ -151,6 +152,7 @@ classDiagram
         +Add(log *RequestLog)
         +Get(id string)
         +GetAll()
+        +Clear()
         +GetLatest(n int)
     }
 
