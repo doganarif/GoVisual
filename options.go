@@ -45,6 +45,9 @@ type Config struct {
 
 	// gRPC configuration
 	GRPC GRPCConfig
+
+	// Shared store instance
+	SharedStore store.Store
 }
 
 // Option is a function that modifies the configuration

@@ -76,20 +76,28 @@ func WrapGRPCServer(opts ...Option) []grpc.ServerOption {
 		return []grpc.ServerOption{}
 	}
 
-	// Create store based on configuration
-	storeConfig := &store.StorageConfig{
-		Type:             config.StorageType,
-		Capacity:         config.MaxRequests,
-		ConnectionString: config.ConnectionString,
-		TableName:        config.TableName,
-		TTL:              config.RedisTTL,
-		ExistingDB:       config.ExistingDB,
-	}
+	// Use shared store if provided, otherwise create a new one
+	var requestStore store.Store
+	var err error
 
-	requestStore, err := store.NewStore(storeConfig)
-	if err != nil {
-		log.Printf("Failed to create configured storage backend for gRPC: %v. Falling back to in-memory storage.", err)
-		requestStore = store.NewInMemoryStore(config.MaxRequests)
+	if config.SharedStore != nil {
+		requestStore = config.SharedStore
+	} else {
+		// Create store based on configuration
+		storeConfig := &store.StorageConfig{
+			Type:             config.StorageType,
+			Capacity:         config.MaxRequests,
+			ConnectionString: config.ConnectionString,
+			TableName:        config.TableName,
+			TTL:              config.RedisTTL,
+			ExistingDB:       config.ExistingDB,
+		}
+
+		requestStore, err = store.NewStore(storeConfig)
+		if err != nil {
+			log.Printf("Failed to create configured storage backend for gRPC: %v. Falling back to in-memory storage.", err)
+			requestStore = store.NewInMemoryStore(config.MaxRequests)
+		}
 	}
 
 	// Create interceptor configuration
@@ -124,20 +132,28 @@ func DialGRPCWithVisualizer(target string, opts ...Option) (*grpc.ClientConn, er
 		return grpc.Dial(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	// Create store based on configuration
-	storeConfig := &store.StorageConfig{
-		Type:             config.StorageType,
-		Capacity:         config.MaxRequests,
-		ConnectionString: config.ConnectionString,
-		TableName:        config.TableName,
-		TTL:              config.RedisTTL,
-		ExistingDB:       config.ExistingDB,
-	}
+	// Use shared store if provided, otherwise create a new one
+	var requestStore store.Store
+	var err error
 
-	requestStore, err := store.NewStore(storeConfig)
-	if err != nil {
-		log.Printf("Failed to create configured storage backend for gRPC client: %v. Falling back to in-memory storage.", err)
-		requestStore = store.NewInMemoryStore(config.MaxRequests)
+	if config.SharedStore != nil {
+		requestStore = config.SharedStore
+	} else {
+		// Create store based on configuration
+		storeConfig := &store.StorageConfig{
+			Type:             config.StorageType,
+			Capacity:         config.MaxRequests,
+			ConnectionString: config.ConnectionString,
+			TableName:        config.TableName,
+			TTL:              config.RedisTTL,
+			ExistingDB:       config.ExistingDB,
+		}
+
+		requestStore, err = store.NewStore(storeConfig)
+		if err != nil {
+			log.Printf("Failed to create configured storage backend for gRPC client: %v. Falling back to in-memory storage.", err)
+			requestStore = store.NewInMemoryStore(config.MaxRequests)
+		}
 	}
 
 	// Create interceptor configuration
@@ -165,20 +181,28 @@ func GRPCDialContext(ctx context.Context, target string, opts ...Option) (*grpc.
 		return grpc.DialContext(ctx, target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
 
-	// Create store based on configuration
-	storeConfig := &store.StorageConfig{
-		Type:             config.StorageType,
-		Capacity:         config.MaxRequests,
-		ConnectionString: config.ConnectionString,
-		TableName:        config.TableName,
-		TTL:              config.RedisTTL,
-		ExistingDB:       config.ExistingDB,
-	}
+	// Use shared store if provided, otherwise create a new one
+	var requestStore store.Store
+	var err error
 
-	requestStore, err := store.NewStore(storeConfig)
-	if err != nil {
-		log.Printf("Failed to create configured storage backend for gRPC client: %v. Falling back to in-memory storage.", err)
-		requestStore = store.NewInMemoryStore(config.MaxRequests)
+	if config.SharedStore != nil {
+		requestStore = config.SharedStore
+	} else {
+		// Create store based on configuration
+		storeConfig := &store.StorageConfig{
+			Type:             config.StorageType,
+			Capacity:         config.MaxRequests,
+			ConnectionString: config.ConnectionString,
+			TableName:        config.TableName,
+			TTL:              config.RedisTTL,
+			ExistingDB:       config.ExistingDB,
+		}
+
+		requestStore, err = store.NewStore(storeConfig)
+		if err != nil {
+			log.Printf("Failed to create configured storage backend for gRPC client: %v. Falling back to in-memory storage.", err)
+			requestStore = store.NewInMemoryStore(config.MaxRequests)
+		}
 	}
 
 	// Create interceptor configuration

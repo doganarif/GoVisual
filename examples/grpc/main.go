@@ -25,7 +25,7 @@ var (
 )
 
 // startGRPCServer starts the gRPC server with GoVisual instrumentation.
-func startGRPCServer() (*grpc.Server, net.Listener) {
+func startGRPCServer(sharedStore govisual.Store) (*grpc.Server, net.Listener) {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *grpcPort))
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
@@ -37,6 +37,7 @@ func startGRPCServer() (*grpc.Server, net.Listener) {
 		govisual.WithGRPCRequestDataLogging(true),
 		govisual.WithGRPCResponseDataLogging(true),
 		govisual.WithMaxRequests(100),
+		govisual.WithSharedStore(sharedStore), // Use the shared store
 	)
 
 	// Register the GreeterService
@@ -54,7 +55,7 @@ func startGRPCServer() (*grpc.Server, net.Listener) {
 }
 
 // startDashboardServer starts the HTTP server for the dashboard.
-func startDashboardServer() *http.Server {
+func startDashboardServer(sharedStore govisual.Store) *http.Server {
 	// Create a simple HTTP mux
 	mux := http.NewServeMux()
 
@@ -84,6 +85,7 @@ func startDashboardServer() *http.Server {
 		govisual.WithMaxRequests(100),
 		govisual.WithRequestBodyLogging(true),
 		govisual.WithResponseBodyLogging(true),
+		govisual.WithSharedStore(sharedStore), // Use the shared store
 	)
 
 	// Create and start the HTTP server
@@ -138,11 +140,20 @@ func makeTestRequest() {
 func main() {
 	flag.Parse()
 
+	// Create a shared store for both HTTP and gRPC servers
+	sharedStore, err := govisual.NewStore(
+		govisual.WithMaxRequests(100),
+		govisual.WithMemoryStorage(),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create shared store: %v", err)
+	}
+
 	// Start the gRPC server
-	grpcServer, grpcLis := startGRPCServer()
+	grpcServer, grpcLis := startGRPCServer(sharedStore)
 
 	// Start the dashboard server
-	httpServer := startDashboardServer()
+	httpServer := startDashboardServer(sharedStore)
 
 	// Make a test request
 	go makeTestRequest()
@@ -167,6 +178,11 @@ func main() {
 	// Shutdown gRPC server
 	grpcServer.GracefulStop()
 	grpcLis.Close()
+
+	// Close the store
+	if err := sharedStore.Close(); err != nil {
+		log.Printf("Store closure error: %v", err)
+	}
 
 	log.Println("Servers shut down successfully")
 }
