@@ -8,7 +8,7 @@ require (
 	google.golang.org/protobuf v1.36.6
 )
 
-replace github.com/doganarif/govisual => ../../
+replace github.com/doganarif/govisual => ../../../
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
