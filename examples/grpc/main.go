@@ -14,8 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	pb_greeter "example/gen/greeter/v1"
+
 	"github.com/doganarif/govisual"
-	pb_greeter "github.com/doganarif/govisual/examples/grpc/gen/greeter/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"

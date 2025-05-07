@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	pb_greeter "github.com/doganarif/govisual/examples/grpc/gen/greeter/v1"
+	pb_greeter "example/gen/greeter/v1"
 )
 
 // server is used to implement the GreeterServer.
