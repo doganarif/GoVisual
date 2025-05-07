@@ -48,7 +48,7 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 		}
 
 		// Create a new request log
-		reqLog := model.NewRequestLog(r)
+		reqLog := model.NewHTTPRequestLog(r)
 
 		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {

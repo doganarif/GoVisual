@@ -42,6 +42,9 @@ type Config struct {
 
 	// Existing database connection for SQLite
 	ExistingDB *sql.DB
+
+	// gRPC configuration
+	GRPC GRPCConfig
 }
 
 // Option is a function that modifies the configuration
@@ -195,5 +198,11 @@ func defaultConfig() *Config {
 		StorageType:         store.StorageTypeMemory,
 		TableName:           "govisual_requests",
 		RedisTTL:            86400, // 24 hours
+		GRPC: GRPCConfig{
+			EnableGRPC:      false,
+			LogRequestData:  false,
+			LogResponseData: false,
+			IgnoreMethods:   []string{},
+		},
 	}
 }
