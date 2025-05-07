@@ -27,5 +27,23 @@
       <div class="stat-label">Avg Response Time</div>
     </div>
   </div>
+
+  <div class="card">
+    <h2>gRPC Request Statistics</h2>
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-value" id="stat-grpc-total">0</div>
+        <div class="stat-label">Total gRPC Requests</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-grpc-success">0</div>
+        <div class="stat-label">Success (Code 0)</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value" id="stat-grpc-error">0</div>
+        <div class="stat-label">Errors (Non-Zero)</div>
+      </div>
+    </div>
+  </div>
 </div>
 {{end}}
