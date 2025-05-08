@@ -1,0 +1,60 @@
+{{define "grpc-details"}}
+<div id="grpcRequestDetails" class="card" style="display: none">
+    <div class="card-header">
+        <h2>gRPC Request Details</h2>
+    </div>
+    <div id="grpcDetailsContent">
+        <div class="detail-row">
+            <strong>ID:</strong> <span id="grpc-detail-id"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Time:</strong> <span id="grpc-detail-time"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Service:</strong> <span id="grpc-detail-service"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Method:</strong> <span id="grpc-detail-method"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Type:</strong> <span id="grpc-detail-type"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Peer:</strong> <span id="grpc-detail-peer"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Status:</strong> <span id="grpc-detail-status"></span>
+        </div>
+        <div class="detail-row">
+            <strong>Duration:</strong> <span id="grpc-detail-duration"></span>
+        </div>
+
+        <div id="grpc-error-container" style="display: none">
+            <h3>Error</h3>
+            <pre id="grpc-detail-error" class="error-text"></pre>
+        </div>
+
+        <h3>Request Metadata</h3>
+        <pre id="grpc-detail-request-md"></pre>
+
+        <h3>Response Metadata</h3>
+        <pre id="grpc-detail-response-md"></pre>
+
+        <div id="grpc-request-data-container">
+            <h3>Request Data</h3>
+            <pre id="grpc-detail-request-data"></pre>
+        </div>
+
+        <div id="grpc-response-data-container">
+            <h3>Response Data</h3>
+            <pre id="grpc-detail-response-data"></pre>
+        </div>
+
+        <div id="grpc-messages-container">
+            <h3>Stream Messages</h3>
+            <div id="grpc-messages-list" class="grpc-messages"></div>
+        </div>
+    </div>
+    <button id="close-grpc-details" class="btn">Close Details</button>
+</div>
+{{end}}
