@@ -6,4 +6,4 @@ This directory contains example applications demonstrating GoVisual's features.
 
 - [Basic Example](basic/) - Simple example demonstrating core GoVisual functionality
 - [OpenTelemetry Example](otel/) - Example demonstrating OpenTelemetry integration
-- [gRPC Example](grpc/) - Example demonstrating how to use GoVisual with a gRPC server
+- [gRPC Agent Example](grpc_agent/) - Example demonstrating how to use GoVisual with a gRPC agent

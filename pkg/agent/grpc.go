@@ -1,4 +1,4 @@
-package grpc
+package agent
 
 import (
 	"context"
@@ -8,8 +8,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/store"
-
+	"github.com/doganarif/govisual/pkg/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -17,10 +16,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// InterceptorConfig contains configuration for gRPC interceptors.
-type InterceptorConfig struct {
-	// Store is the storage backend for request logs.
-	Store store.Store
+// GRPCAgentConfig contains configuration options specific to gRPC agents.
+type GRPCAgentConfig struct {
+	AgentConfig
 
 	// LogRequestData determines whether request message data is logged.
 	LogRequestData bool
@@ -32,100 +30,60 @@ type InterceptorConfig struct {
 	IgnoreMethods []string
 }
 
-// parseFullMethod parses the full method string (/service/method) into service and method components.
-func parseFullMethod(fullMethod string) (service, method string) {
-	if fullMethod == "" {
-		return "", ""
-	}
-
-	// Remove leading slash
-	fullMethod = strings.TrimPrefix(fullMethod, "/")
-
-	// Split into service and method
-	parts := strings.Split(fullMethod, "/")
-	if len(parts) != 2 {
-		return fullMethod, ""
-	}
-
-	return parts[0], parts[1]
+// GRPCAgent is an agent that collects data from gRPC services.
+type GRPCAgent struct {
+	*BaseAgent
+	config GRPCAgentConfig
 }
 
-// getMethodType determines the type of gRPC method based on the handler info.
-func getMethodType(isClientStream, isServerStream bool) model.GRPCMethodType {
-	switch {
-	case isClientStream && isServerStream:
-		return model.BidiStreamMethod
-	case isClientStream:
-		return model.ClientStreamMethod
-	case isServerStream:
-		return model.ServerStreamMethod
-	default:
-		return model.UnaryMethod
+// NewGRPCAgent creates a new gRPC agent with the given transport.
+func NewGRPCAgent(transport transport.Transport, opts ...GRPCOption) *GRPCAgent {
+	config := GRPCAgentConfig{
+		AgentConfig: AgentConfig{
+			Transport: transport,
+		},
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(&config)
+	}
+
+	return &GRPCAgent{
+		BaseAgent: NewBaseAgent("grpc", config.AgentConfig),
+		config:    config,
 	}
 }
 
-// extractPeerAddress extracts the peer address from the context.
-func extractPeerAddress(ctx context.Context) string {
-	p, ok := peer.FromContext(ctx)
-	if !ok {
-		return "unknown"
+// GRPCOption is a function that configures a gRPC agent.
+type GRPCOption func(*GRPCAgentConfig)
+
+// WithGRPCRequestDataLogging enables or disables logging of gRPC request message data.
+func WithGRPCRequestDataLogging(enabled bool) GRPCOption {
+	return func(c *GRPCAgentConfig) {
+		c.LogRequestData = enabled
 	}
-	return p.Addr.String()
 }
 
-// metadataToMap converts metadata to a map.
-func metadataToMap(md metadata.MD) map[string][]string {
-	if md == nil {
-		return nil
+// WithGRPCResponseDataLogging enables or disables logging of gRPC response message data.
+func WithGRPCResponseDataLogging(enabled bool) GRPCOption {
+	return func(c *GRPCAgentConfig) {
+		c.LogResponseData = enabled
 	}
-
-	result := make(map[string][]string, len(md))
-	for k, v := range md {
-		result[k] = v
-	}
-	return result
 }
 
-// shouldIgnoreMethod checks if a method should be ignored based on the configuration.
-func shouldIgnoreMethod(config *InterceptorConfig, fullMethod string) bool {
-	for _, pattern := range config.IgnoreMethods {
-		// Check for exact match
-		if pattern == fullMethod {
-			return true
-		}
-
-		// Check for service-wide ignore with trailing slash
-		if strings.HasSuffix(pattern, "/") && strings.HasPrefix(fullMethod, pattern) {
-			return true
-		}
-
-		// Simple path matching
-		matched, _ := path.Match(pattern, fullMethod)
-		if matched {
-			return true
-		}
+// WithIgnoreGRPCMethods sets the gRPC method patterns to ignore.
+func WithIgnoreGRPCMethods(patterns ...string) GRPCOption {
+	return func(c *GRPCAgentConfig) {
+		c.IgnoreMethods = append(c.IgnoreMethods, patterns...)
 	}
-	return false
 }
 
-// marshalMessage attempts to marshal a message to JSON for logging.
-func marshalMessage(message interface{}, shouldLog bool) string {
-	if !shouldLog || message == nil {
-		return ""
-	}
-
-	data, err := json.Marshal(message)
-	if err != nil {
-		return "[failed to marshal: " + err.Error() + "]"
-	}
-	return string(data)
-}
-
-// UnaryServerInterceptor returns a new unary server interceptor for request visualization.
-func UnaryServerInterceptor(config *InterceptorConfig) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
-		// Check if the method should be ignored
-		if shouldIgnoreMethod(config, info.FullMethod) {
+// UnaryServerInterceptor returns a gRPC unary server interceptor for data collection.
+func (a *GRPCAgent) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Skip if method should be ignored
+		if a.shouldIgnoreMethod(info.FullMethod) {
 			return handler(ctx, req)
 		}
 
@@ -144,25 +102,16 @@ func UnaryServerInterceptor(config *InterceptorConfig) grpc.UnaryServerIntercept
 		reqLog.GRPCPeer = extractPeerAddress(ctx)
 
 		// Log request message if enabled
-		reqLog.GRPCRequestData = marshalMessage(req, config.LogRequestData)
+		reqLog.GRPCRequestData = marshalMessage(req, a.config.LogRequestData)
 
 		// Record start time
 		startTime := time.Now()
 
-		// Create metadata for sending headers
-		var responseHeader metadata.MD
-
 		// Call the handler
-		resp, err = handler(
-			metadata.NewOutgoingContext(ctx, metadata.MD{}),
-			req,
-		)
+		resp, err := handler(ctx, req)
 
 		// Record duration
 		reqLog.Duration = time.Since(startTime).Milliseconds()
-
-		// Log response metadata
-		reqLog.GRPCResponseMD = metadataToMap(responseHeader)
 
 		// Log status code and description
 		st, _ := status.FromError(err)
@@ -171,23 +120,23 @@ func UnaryServerInterceptor(config *InterceptorConfig) grpc.UnaryServerIntercept
 
 		// Log response message if enabled
 		if err == nil {
-			reqLog.GRPCResponseData = marshalMessage(resp, config.LogResponseData)
+			reqLog.GRPCResponseData = marshalMessage(resp, a.config.LogResponseData)
 		} else {
 			reqLog.Error = err.Error()
 		}
 
-		// Store the request log
-		config.Store.Add(reqLog)
+		// Process the request log
+		a.Process(reqLog)
 
 		return resp, err
 	}
 }
 
-// StreamServerInterceptor returns a new streaming server interceptor for request visualization.
-func StreamServerInterceptor(config *InterceptorConfig) grpc.StreamServerInterceptor {
+// StreamServerInterceptor returns a gRPC stream server interceptor for data collection.
+func (a *GRPCAgent) StreamServerInterceptor() grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		// Check if the method should be ignored
-		if shouldIgnoreMethod(config, info.FullMethod) {
+		// Skip if method should be ignored
+		if a.shouldIgnoreMethod(info.FullMethod) {
 			return handler(srv, ss)
 		}
 
@@ -211,10 +160,10 @@ func StreamServerInterceptor(config *InterceptorConfig) grpc.StreamServerInterce
 		// Create a wrapper around the server stream
 		wrappedStream := &wrappedServerStream{
 			ServerStream:    ss,
-			config:          config,
+			agent:           a,
 			reqLog:          reqLog,
-			logRequestData:  config.LogRequestData,
-			logResponseData: config.LogResponseData,
+			logRequestData:  a.config.LogRequestData,
+			logResponseData: a.config.LogResponseData,
 		}
 
 		// Record start time
@@ -235,17 +184,168 @@ func StreamServerInterceptor(config *InterceptorConfig) grpc.StreamServerInterce
 			reqLog.Error = err.Error()
 		}
 
-		// Store the request log
-		config.Store.Add(reqLog)
+		// Process the request log
+		a.Process(reqLog)
 
 		return err
 	}
 }
 
+// UnaryClientInterceptor returns a gRPC unary client interceptor for data collection.
+func (a *GRPCAgent) UnaryClientInterceptor() grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		// Skip if method should be ignored
+		if a.shouldIgnoreMethod(method) {
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}
+
+		// Extract service and method names
+		service, methodName := parseFullMethod(method)
+
+		// Create a new request log
+		reqLog := model.NewGRPCRequestLog(service, methodName, model.UnaryMethod)
+
+		// Extract request metadata
+		if md, ok := metadata.FromOutgoingContext(ctx); ok {
+			reqLog.GRPCRequestMD = metadataToMap(md)
+		}
+
+		// Log request message if enabled
+		reqLog.GRPCRequestData = marshalMessage(req, a.config.LogRequestData)
+
+		// Set peer information to the target
+		reqLog.GRPCPeer = cc.Target()
+
+		// Record start time
+		startTime := time.Now()
+
+		// Create metadata for receiving headers and trailers
+		var responseHeader, responseTrailer metadata.MD
+		opts = append(opts,
+			grpc.Header(&responseHeader),
+			grpc.Trailer(&responseTrailer),
+		)
+
+		// Call the invoker
+		err := invoker(ctx, method, req, reply, cc, opts...)
+
+		// Record duration
+		reqLog.Duration = time.Since(startTime).Milliseconds()
+
+		// Log response metadata
+		reqLog.GRPCResponseMD = metadataToMap(responseHeader)
+
+		// Log status code and description
+		st, _ := status.FromError(err)
+		reqLog.GRPCStatusCode = int32(st.Code())
+		reqLog.GRPCStatusDesc = st.Message()
+
+		// Log response message if enabled
+		if err == nil {
+			reqLog.GRPCResponseData = marshalMessage(reply, a.config.LogResponseData)
+		} else {
+			reqLog.Error = err.Error()
+		}
+
+		// Process the request log
+		a.Process(reqLog)
+
+		return err
+	}
+}
+
+// StreamClientInterceptor returns a gRPC stream client interceptor for data collection.
+func (a *GRPCAgent) StreamClientInterceptor() grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		// Skip if method should be ignored
+		if a.shouldIgnoreMethod(method) {
+			return streamer(ctx, desc, cc, method, opts...)
+		}
+
+		// Extract service and method names
+		service, methodName := parseFullMethod(method)
+
+		// Determine method type
+		methodType := getMethodType(desc.ClientStreams, desc.ServerStreams)
+
+		// Create a new request log
+		reqLog := model.NewGRPCRequestLog(service, methodName, methodType)
+
+		// Extract request metadata
+		if md, ok := metadata.FromOutgoingContext(ctx); ok {
+			reqLog.GRPCRequestMD = metadataToMap(md)
+		}
+
+		// Set peer information to the target
+		reqLog.GRPCPeer = cc.Target()
+
+		// Record start time
+		startTime := time.Now()
+
+		// Create metadata for receiving headers and trailers
+		var responseHeader metadata.MD
+		opts = append(opts, grpc.Header(&responseHeader))
+
+		// Call the streamer
+		clientStream, err := streamer(ctx, desc, cc, method, opts...)
+
+		if err != nil {
+			// Record duration
+			reqLog.Duration = time.Since(startTime).Milliseconds()
+
+			// Log error details
+			reqLog.Error = err.Error()
+			st, _ := status.FromError(err)
+			reqLog.GRPCStatusCode = int32(st.Code())
+			reqLog.GRPCStatusDesc = st.Message()
+
+			// Process the request log
+			a.Process(reqLog)
+
+			return nil, err
+		}
+
+		// Create a wrapper around the client stream
+		wrappedStream := &wrappedClientStream{
+			ClientStream:    clientStream,
+			agent:           a,
+			reqLog:          reqLog,
+			startTime:       startTime,
+			responseHeader:  responseHeader,
+			logRequestData:  a.config.LogRequestData,
+			logResponseData: a.config.LogResponseData,
+		}
+
+		return wrappedStream, nil
+	}
+}
+
+// shouldIgnoreMethod checks if a method should be ignored.
+func (a *GRPCAgent) shouldIgnoreMethod(fullMethod string) bool {
+	for _, pattern := range a.config.IgnoreMethods {
+		// Check for exact match
+		if pattern == fullMethod {
+			return true
+		}
+
+		// Check for service-wide ignore with trailing slash
+		if strings.HasSuffix(pattern, "/") && strings.HasPrefix(fullMethod, pattern) {
+			return true
+		}
+
+		// Simple path matching
+		matched, _ := path.Match(pattern, fullMethod)
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
 // wrappedServerStream wraps a grpc.ServerStream to intercept and log messages.
 type wrappedServerStream struct {
 	grpc.ServerStream
-	config          *InterceptorConfig
+	agent           *GRPCAgent
 	reqLog          *model.RequestLog
 	logRequestData  bool
 	logResponseData bool
@@ -295,153 +395,10 @@ func (w *wrappedServerStream) SendMsg(m interface{}) error {
 	return w.ServerStream.SendMsg(m)
 }
 
-// UnaryClientInterceptor returns a new unary client interceptor for request visualization.
-func UnaryClientInterceptor(config *InterceptorConfig) grpc.UnaryClientInterceptor {
-	return func(
-		ctx context.Context,
-		method string,
-		req, resp interface{},
-		cc *grpc.ClientConn,
-		invoker grpc.UnaryInvoker,
-		opts ...grpc.CallOption,
-	) error {
-		// Check if the method should be ignored
-		if shouldIgnoreMethod(config, method) {
-			return invoker(ctx, method, req, resp, cc, opts...)
-		}
-
-		// Extract service and method names
-		service, methodName := parseFullMethod(method)
-
-		// Create a new request log
-		reqLog := model.NewGRPCRequestLog(service, methodName, model.UnaryMethod)
-
-		// Extract request metadata
-		if md, ok := metadata.FromOutgoingContext(ctx); ok {
-			reqLog.GRPCRequestMD = metadataToMap(md)
-		}
-
-		// Log request message if enabled
-		reqLog.GRPCRequestData = marshalMessage(req, config.LogRequestData)
-
-		// Set peer information to the target
-		reqLog.GRPCPeer = cc.Target()
-
-		// Record start time
-		startTime := time.Now()
-
-		// Create metadata for receiving headers and trailers
-		var responseHeader, responseTrailer metadata.MD
-		opts = append(opts,
-			grpc.Header(&responseHeader),
-			grpc.Trailer(&responseTrailer),
-		)
-
-		// Call the invoker
-		err := invoker(ctx, method, req, resp, cc, opts...)
-
-		// Record duration
-		reqLog.Duration = time.Since(startTime).Milliseconds()
-
-		// Log response metadata
-		reqLog.GRPCResponseMD = metadataToMap(responseHeader)
-
-		// Log status code and description
-		st, _ := status.FromError(err)
-		reqLog.GRPCStatusCode = int32(st.Code())
-		reqLog.GRPCStatusDesc = st.Message()
-
-		// Log response message if enabled
-		if err == nil {
-			reqLog.GRPCResponseData = marshalMessage(resp, config.LogResponseData)
-		} else {
-			reqLog.Error = err.Error()
-		}
-
-		// Store the request log
-		config.Store.Add(reqLog)
-
-		return err
-	}
-}
-
-// StreamClientInterceptor returns a new streaming client interceptor for request visualization.
-func StreamClientInterceptor(config *InterceptorConfig) grpc.StreamClientInterceptor {
-	return func(
-		ctx context.Context,
-		desc *grpc.StreamDesc,
-		cc *grpc.ClientConn,
-		method string,
-		streamer grpc.Streamer,
-		opts ...grpc.CallOption,
-	) (grpc.ClientStream, error) {
-		// Check if the method should be ignored
-		if shouldIgnoreMethod(config, method) {
-			return streamer(ctx, desc, cc, method, opts...)
-		}
-
-		// Extract service and method names
-		service, methodName := parseFullMethod(method)
-
-		// Determine method type
-		methodType := getMethodType(desc.ClientStreams, desc.ServerStreams)
-
-		// Create a new request log
-		reqLog := model.NewGRPCRequestLog(service, methodName, methodType)
-
-		// Extract request metadata
-		if md, ok := metadata.FromOutgoingContext(ctx); ok {
-			reqLog.GRPCRequestMD = metadataToMap(md)
-		}
-
-		// Set peer information to the target
-		reqLog.GRPCPeer = cc.Target()
-
-		// Record start time
-		startTime := time.Now()
-
-		// Create metadata for receiving headers and trailers
-		var responseHeader metadata.MD
-		opts = append(opts, grpc.Header(&responseHeader))
-
-		// Call the streamer
-		clientStream, err := streamer(ctx, desc, cc, method, opts...)
-
-		if err != nil {
-			// Record duration
-			reqLog.Duration = time.Since(startTime).Milliseconds()
-
-			// Log error details
-			reqLog.Error = err.Error()
-			st, _ := status.FromError(err)
-			reqLog.GRPCStatusCode = int32(st.Code())
-			reqLog.GRPCStatusDesc = st.Message()
-
-			// Store the request log
-			config.Store.Add(reqLog)
-
-			return nil, err
-		}
-
-		// Create a wrapper around the client stream
-		wrappedStream := &wrappedClientStream{
-			ClientStream:    clientStream,
-			config:          config,
-			reqLog:          reqLog,
-			startTime:       startTime,
-			responseHeader:  responseHeader,
-			logRequestData:  config.LogRequestData,
-			logResponseData: config.LogResponseData,
-		}
-
-		return wrappedStream, nil
-	}
-}
-
 // wrappedClientStream wraps a grpc.ClientStream to intercept and log messages.
 type wrappedClientStream struct {
 	grpc.ClientStream
-	config          *InterceptorConfig
+	agent           *GRPCAgent
 	reqLog          *model.RequestLog
 	startTime       time.Time
 	responseHeader  metadata.MD
@@ -555,7 +512,76 @@ func (w *wrappedClientStream) finishStreamWithError(err error) {
 			w.reqLog.Error = ""
 		}
 
-		// Store the request log
-		w.config.Store.Add(w.reqLog)
+		// Process the request log
+		w.agent.Process(w.reqLog)
 	}
+}
+
+// Helper functions
+
+// parseFullMethod parses the full method string (/service/method) into service and method components.
+func parseFullMethod(fullMethod string) (service, method string) {
+	if fullMethod == "" {
+		return "", ""
+	}
+
+	// Remove leading slash
+	fullMethod = strings.TrimPrefix(fullMethod, "/")
+
+	// Split into service and method
+	parts := strings.Split(fullMethod, "/")
+	if len(parts) != 2 {
+		return fullMethod, ""
+	}
+
+	return parts[0], parts[1]
+}
+
+// getMethodType determines the type of gRPC method based on the stream info.
+func getMethodType(isClientStream, isServerStream bool) model.GRPCMethodType {
+	switch {
+	case isClientStream && isServerStream:
+		return model.BidiStreamMethod
+	case isClientStream:
+		return model.ClientStreamMethod
+	case isServerStream:
+		return model.ServerStreamMethod
+	default:
+		return model.UnaryMethod
+	}
+}
+
+// extractPeerAddress extracts the peer address from the context.
+func extractPeerAddress(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "unknown"
+	}
+	return p.Addr.String()
+}
+
+// metadataToMap converts metadata to a map.
+func metadataToMap(md metadata.MD) map[string][]string {
+	if md == nil {
+		return nil
+	}
+
+	result := make(map[string][]string, len(md))
+	for k, v := range md {
+		result[k] = v
+	}
+	return result
+}
+
+// marshalMessage attempts to marshal a message to JSON for logging.
+func marshalMessage(message interface{}, shouldLog bool) string {
+	if !shouldLog || message == nil {
+		return ""
+	}
+
+	data, err := json.Marshal(message)
+	if err != nil {
+		return "[failed to marshal: " + err.Error() + "]"
+	}
+	return string(data)
 }
