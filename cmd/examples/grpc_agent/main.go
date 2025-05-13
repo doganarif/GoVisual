@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
+	pb_greeter "example/gen/greeter/v1"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,15 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	pb_greeter "example/gen/greeter/v1"
-
 	"github.com/doganarif/govisual"
 	"github.com/doganarif/govisual/internal/store"
 	"github.com/doganarif/govisual/pkg/agent"
 	"github.com/doganarif/govisual/pkg/server"
-
 	"github.com/doganarif/govisual/pkg/transport"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -30,12 +27,22 @@ var (
 	port      = flag.Int("port", 8080, "HTTP server port (for dashboard)")
 	grpcPort  = flag.Int("grpc-port", 9090, "gRPC server port")
 	agentMode = flag.String("agent-mode", "store", "Agent mode: store, nats, http")
-	natsURL   = flag.String("nats-url", "nats://localhost:4222", "NATS server URL")
-	httpURL   = flag.String("http-url", "http://localhost:8080/api/agent/logs", "HTTP endpoint URL")
+	natsURL   = flag.String("nats-url", "nats://localhost:4222", "NATS server URL. Only used with agent-mode 'nats'")
+	httpURL   = flag.String("http-url", "http://localhost:8080/api/agent/logs", "HTTP endpoint URL. Only used with agent-mode 'http'")
 )
 
 func main() {
 	flag.Parse()
+
+	err := run()
+	if err != nil {
+		fmt.Printf("failed to run: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// Create a shared store for visualization
 	sharedStore, err := govisual.NewStore(
@@ -43,7 +50,7 @@ func main() {
 		govisual.WithMemoryStorage(),
 	)
 	if err != nil {
-		log.Fatalf("Failed to create store: %v", err)
+		return fmt.Errorf("creating shared store: %w", err)
 	}
 
 	// Create transport based on agent mode
@@ -51,22 +58,22 @@ func main() {
 
 	switch *agentMode {
 	case "store":
-		log.Println("Using shared store transport")
+		log.Info("Using shared store transport")
 		transportObj = transport.NewStoreTransport(sharedStore)
 	case "nats":
-		log.Printf("Using NATS transport with server: %s", *natsURL)
+		log.Info("Using NATS transport", slog.String("url", *natsURL))
 		transportObj, err = transport.NewNATSTransport(*natsURL)
 		if err != nil {
-			log.Fatalf("Failed to create NATS transport: %v", err)
+			return fmt.Errorf("creating NATS transport: %w", err)
 		}
 	case "http":
-		log.Printf("Using HTTP transport with endpoint: %s", *httpURL)
+		log.Info("Using HTTP transport", slog.String("url", *httpURL))
 		transportObj = transport.NewHTTPTransport(*httpURL,
 			transport.WithTimeout(5*time.Second),
 			transport.WithMaxRetries(3),
 		)
 	default:
-		log.Fatalf("Unknown agent mode: %s", *agentMode)
+		return fmt.Errorf("unknown agent mode %q", *agentMode)
 	}
 
 	// Create gRPC agent
@@ -81,17 +88,19 @@ func main() {
 	// Start the gRPC server with the agent
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *grpcPort))
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		return fmt.Errorf("listening to gRPC: %w", err)
 	}
 
 	grpcServer := server.NewGRPCServer(grpcAgent)
 	pb_greeter.RegisterGreeterServiceServer(grpcServer, &Server{})
 
-	log.Printf("gRPC server listening on port %d with visualization", *grpcPort)
+	log.Info("Starting gRPC server with visualisation", slog.Int("port", *grpcPort))
 
 	go func() {
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve: %v", err)
+		err := grpcServer.Serve(lis)
+		if err != nil {
+			log.Error("failed to serve gRPC", slog.Any("err", err))
+			os.Exit(1)
 		}
 	}()
 
@@ -161,7 +170,7 @@ func main() {
 		internalStore, ok := sharedStore.(store.Store)
 		if !ok {
 			internalStore = store.NewInMemoryStore(100)
-			log.Println("Warning: Failed to convert shared store, created new in-memory store for agent API")
+			log.Warn("failed to convert shared store; created new in-memory store for agent API")
 		}
 
 		// Create and register agent API handler
@@ -185,17 +194,17 @@ func main() {
 		internalStore, ok := sharedStore.(store.Store)
 		if !ok {
 			internalStore = store.NewInMemoryStore(100)
-			log.Println("Warning: Failed to convert shared store, created new in-memory store for NATS handler")
+			log.Warn("failed to convert shared store; created new in-memory store for NATS handler")
 		}
 
-		var err error
 		natsHandler, err = server.NewNATSHandler(internalStore, *natsURL)
 		if err != nil {
-			log.Fatalf("Failed to create NATS handler: %v", err)
+			return fmt.Errorf("creating NATS handler: %w", err)
 		}
 
-		if err := natsHandler.Start(); err != nil {
-			log.Fatalf("Failed to start NATS handler: %v", err)
+		err = natsHandler.Start()
+		if err != nil {
+			return fmt.Errorf("starting NATS handler: %w", err)
 		}
 	}
 
@@ -204,12 +213,13 @@ func main() {
 		Handler: handler,
 	}
 
-	log.Printf("Dashboard server started at http://localhost:%d", *port)
-	log.Printf("Visit http://localhost:%d/__viz to see the dashboard", *port)
+	log.Info("Started dashboard server", slog.Int("port", *port), slog.String("dashboard_addr", fmt.Sprintf("http://localhost:%d/__viz", *port)))
 
 	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("HTTP server error: %v", err)
+		err := httpServer.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			log.Error("failed to serve HTTP", slog.Any("err", err))
+			os.Exit(1)
 		}
 	}()
 
@@ -218,12 +228,12 @@ func main() {
 		time.Sleep(500 * time.Millisecond)
 
 		// Create gRPC client
-		conn, err := grpc.Dial(
+		conn, err := grpc.NewClient(
 			fmt.Sprintf("localhost:%d", *grpcPort),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 		)
 		if err != nil {
-			log.Printf("Failed to connect: %v", err)
+			log.Error("Failed to connect: %v", err)
 			return
 		}
 		defer conn.Close()
@@ -233,40 +243,40 @@ func main() {
 		defer cancel()
 
 		// Test 1: Unary RPC
-		log.Println("Testing unary RPC (SayHello)")
+		log.Info("Testing unary RPC (SayHello)")
 		resp, err := client.SayHello(ctx, &pb_greeter.HelloRequest{
 			Name:    "Agent Test",
 			Message: "This is a test message",
 		})
 		if err != nil {
-			log.Printf("SayHello failed: %v", err)
+			log.Error("SayHello failed", slog.Any("err", err))
 		} else {
-			log.Printf("SayHello response: %s (timestamp: %d)", resp.GetMessage(), resp.GetTimestamp())
+			log.Info("Received unary RPC response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
 		}
 
 		// Test 2: Server streaming RPC
-		log.Println("Testing server streaming RPC (SayHelloStream)")
+		log.Info("Testing server streaming RPC (SayHelloStream)")
 		stream, err := client.SayHelloStream(ctx, &pb_greeter.HelloRequest{
 			Name:    "Stream Test",
 			Message: "Testing server streaming",
 		})
 		if err != nil {
-			log.Printf("SayHelloStream failed: %v", err)
+			log.Error("SayHelloStream failed", slog.Any("err", err))
 		} else {
 			for {
 				resp, err := stream.Recv()
 				if err != nil {
 					break
 				}
-				log.Printf("Stream response: %s (timestamp: %d)", resp.GetMessage(), resp.GetTimestamp())
+				log.Info("Received server stream response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
 			}
 		}
 
 		// Test 3: Client streaming RPC
-		log.Println("Testing client streaming RPC (CollectHellos)")
+		log.Info("Testing client streaming RPC (CollectHellos)")
 		clientStream, err := client.CollectHellos(ctx)
 		if err != nil {
-			log.Printf("CollectHellos failed: %v", err)
+			log.Error("CollectHellos failed", slog.Any("err", err))
 		} else {
 			// Send multiple messages
 			for i := 1; i <= 3; i++ {
@@ -275,7 +285,7 @@ func main() {
 					Name:    name,
 					Message: fmt.Sprintf("Message from %s", name),
 				}); err != nil {
-					log.Printf("Error sending client stream message: %v", err)
+					log.Error("failed to send client stream message", slog.Any("err", err))
 					break
 				}
 				time.Sleep(100 * time.Millisecond)
@@ -284,17 +294,17 @@ func main() {
 			// Close and receive response
 			resp, err := clientStream.CloseAndRecv()
 			if err != nil {
-				log.Printf("Error closing client stream: %v", err)
+				log.Error("failed to close client stream", slog.Any("err", err))
 			} else {
-				log.Printf("Client stream response: %s (timestamp: %d)", resp.GetMessage(), resp.GetTimestamp())
+				log.Info("Received client stream response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
 			}
 		}
 
 		// Test 4: Bidirectional streaming RPC
-		log.Println("Testing bidirectional streaming RPC (ChatHello)")
+		log.Info("Testing bidirectional streaming RPC (ChatHello)")
 		bidiStream, err := client.ChatHello(ctx)
 		if err != nil {
-			log.Printf("ChatHello failed: %v", err)
+			log.Error("ChatHello failed", slog.Any("err", err))
 		} else {
 			// Send and receive in goroutines
 			done := make(chan bool)
@@ -306,7 +316,7 @@ func main() {
 					if err != nil {
 						break
 					}
-					log.Printf("Bidi response: %s (timestamp: %d)", resp.GetMessage(), resp.GetTimestamp())
+					log.Info("Received Bidi response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
 				}
 				done <- true
 			}()
@@ -318,7 +328,7 @@ func main() {
 					Name:    name,
 					Message: fmt.Sprintf("Bidi message from %s", name),
 				}); err != nil {
-					log.Printf("Error sending bidi message: %v", err)
+					log.Error("failed to send bidi message: %v", err)
 					break
 				}
 				time.Sleep(200 * time.Millisecond)
@@ -329,7 +339,7 @@ func main() {
 			<-done
 		}
 
-		log.Println("All gRPC tests completed")
+		log.Info("All gRPC tests completed")
 	}()
 
 	// Wait for termination signal
@@ -337,44 +347,42 @@ func main() {
 	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 	<-signalChan
 
-	log.Println("Shutdown signal received")
+	log.Info("Shutdown signal received")
 
-	// Graceful shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Shutdown HTTP server
 	if err := httpServer.Shutdown(ctx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		log.Info("HTTP server shutdown error: %v", err)
 	}
 
-	// Shutdown gRPC server
 	grpcServer.GracefulStop()
 	lis.Close()
 
-	// Stop NATS handler if running
 	if natsHandler != nil {
-		if err := natsHandler.Stop(); err != nil {
-			log.Printf("NATS handler stop error: %v", err)
+		err = natsHandler.Stop()
+		if err != nil {
+			log.Error("failed to stop NATS handler", slog.Any("err", err))
 		}
 	}
 
-	// Close the agent
-	if err := grpcAgent.Close(); err != nil {
-		log.Printf("Agent closure error: %v", err)
+	err = grpcAgent.Close()
+	if err != nil {
+		log.Error("failed to close agent", slog.Any("err", err))
 	}
 
-	// Close the transport
-	if err := transportObj.Close(); err != nil {
-		log.Printf("Transport closure error: %v", err)
+	err = transportObj.Close()
+	if err != nil {
+		log.Error("failed to close transport", slog.Any("err", err))
 	}
 
-	// Close the store
-	if err := sharedStore.Close(); err != nil {
-		log.Printf("Store closure error: %v", err)
+	err = sharedStore.Close()
+	if err != nil {
+		log.Error("failed to close store", slog.Any("err", err))
 	}
 
-	log.Println("Servers shut down successfully")
+	log.Info("Servers shut down successfully")
+	return nil
 }
 
 // getExtraInfo returns extra information for the homepage based on the agent mode
