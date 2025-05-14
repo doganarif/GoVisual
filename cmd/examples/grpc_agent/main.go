@@ -67,13 +67,13 @@ func run() error {
 		return fmt.Errorf("unknown agent mode %q", *agentMode)
 	}
 
-	// Create gRPC agent
+	// Create gRPC agent - now using the type-specific options
 	grpcAgent := agent.NewGRPCAgent(transportObj,
 		agent.WithGRPCRequestDataLogging(true),
 		agent.WithGRPCResponseDataLogging(true),
-		agent.WithBatchingEnabled(true),
-		agent.WithBatchSize(5),
-		agent.WithBatchInterval(1*time.Second),
+		agent.WithGRPCBatchingEnabled(true),
+		agent.WithGRPCBatchSize(5),
+		agent.WithGRPCBatchInterval(1*time.Second),
 	)
 
 	// Start the gRPC server with the agent
