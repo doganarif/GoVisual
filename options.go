@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 type Config struct {
@@ -42,6 +42,9 @@ type Config struct {
 
 	// Existing database connection for SQLite
 	ExistingDB *sql.DB
+
+	// Shared store instance
+	SharedStore store.Store
 }
 
 // Option is a function that modifies the configuration
@@ -150,6 +153,12 @@ func WithRedisStorage(connStr string, ttlSeconds int) Option {
 		c.StorageType = store.StorageTypeRedis
 		c.ConnectionString = connStr
 		c.RedisTTL = ttlSeconds
+	}
+}
+
+func WithSharedStore(sharedStore store.Store) Option {
+	return func(c *Config) {
+		c.SharedStore = sharedStore
 	}
 }
 

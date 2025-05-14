@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 // Handler is the HTTP handler for the dashboard

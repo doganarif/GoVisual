@@ -1,0 +1,11 @@
+version: "3"
+
+tasks:
+  generate:
+    cmds:
+      - go tool -modfile=tool.go.mod buf generate
+
+  docs:
+    cmds:
+      - go tool -modfile=tool.go.mod buf build -o example.protoset
+      - go tool -modfile=tool.go.mod grpcui -plaintext -protoset=example.protoset 127.0.0.1:9090

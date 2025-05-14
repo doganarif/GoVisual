@@ -13,7 +13,7 @@ func TestNewRequestLog(t *testing.T) {
 	}
 	req.Header.Set("X-Test-Header", "HeaderValue")
 
-	log := NewRequestLog(req)
+	log := NewHTTPRequestLog(req)
 
 	if log.ID == "" {
 		t.Error("expected ID to be generated, got empty string")

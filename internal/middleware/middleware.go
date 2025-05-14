@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 // PathMatcher defines an interface for checking if a path should be ignored
@@ -48,7 +48,7 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 		}
 
 		// Create a new request log
-		reqLog := model.NewRequestLog(r)
+		reqLog := model.NewHTTPRequestLog(r)
 
 		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {

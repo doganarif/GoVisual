@@ -1,0 +1,1579 @@
+## Generated with Amalgo at: 2025-05-14 20:41:24
+
+## File Tree
+
+└── grpc_agent/
+    ├── README.md
+    ├── grpc_server.go
+    ├── main.go
+    └── gen/
+        └── greeter/
+            └── v1/
+                ├── greeter.pb.go
+                └── greeter_grpc.pb.go
+
+## File Contents
+
+--- Start File: grpc_agent/README.md
+# GoVisual Agent Architecture
+
+This document explains how to use the new agent architecture in GoVisual to monitor distributed services.
+
+## What is the Agent Architecture?
+
+The agent architecture allows GoVisual to collect request data from multiple services (potentially running on different machines) and visualize them in a central dashboard. This is particularly useful for microservice architectures or distributed systems where multiple services need to be monitored.
+
+### Key Components
+
+1. **Agents**: Lightweight components that attach to services (gRPC, HTTP) to collect request/response data
+2. **Transports**: Mechanisms for sending data from agents to the visualization server
+3. **Visualization Server**: Central server that receives, stores, and displays the request data
+
+## Getting Started
+
+### 1. Setting Up the Visualization Server
+
+Start by initializing a visualization server that will display the dashboard and receive agent data:
+
+```go
+package main
+
+import (
+    "log"
+    "net/http"
+    
+    "github.com/doganarif/govisual"
+    "github.com/doganarif/govisual/internal/server"
+)
+
+func main() {
+    // Create a store for visualization data
+    store, err := govisual.NewStore(
+        govisual.WithMaxRequests(1000),
+        govisual.WithMemoryStorage(),
+    )
+    if err != nil {
+        log.Fatalf("Failed to create store: %v", err)
+    }
+    
+    // Create a server mux
+    mux := http.NewServeMux()
+    
+    // Add homepage
+    mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("<h1>GoVisual Dashboard</h1><p>Go to <a href='/__viz'>/__viz</a> to see the dashboard</p>"))
+    })
+    
+    // Register agent API endpoints
+    agentAPI := server.NewAgentAPI(store)
+    agentAPI.RegisterHandlers(mux)
+    
+    // Wrap with GoVisual
+    handler := govisual.Wrap(
+        mux,
+        govisual.WithMaxRequests(1000),
+        govisual.WithSharedStore(store),
+    )
+    
+    // Start HTTP server
+    log.Println("Starting dashboard server on :8080")
+    if err := http.ListenAndServe(":8080", handler); err != nil {
+        log.Fatalf("HTTP server error: %v", err)
+    }
+}
+```
+
+For NATS transport, you also need to add a NATS handler:
+
+```go
+// Set up NATS handler if using NATS transport
+natsHandler, err := server.NewNATSHandler(store, "nats://localhost:4222")
+if err != nil {
+    log.Fatalf("Failed to create NATS handler: %v", err)
+}
+
+if err := natsHandler.Start(); err != nil {
+    log.Fatalf("Failed to start NATS handler: %v", err)
+}
+defer natsHandler.Stop()
+```
+
+### 2. Setting Up gRPC Agents
+
+Here's how to set up a gRPC agent with different transport options:
+
+#### Shared Store Transport (Local Services)
+
+```go
+package main
+
+import (
+    "log"
+    "net"
+    
+    "github.com/doganarif/govisual"
+    "google.golang.org/grpc"
+    "your-service/proto"
+)
+
+func main() {
+    // Create or access shared store
+    sharedStore, err := govisual.NewStore(
+        govisual.WithMaxRequests(100),
+        govisual.WithMemoryStorage(),
+    )
+    if err != nil {
+        log.Fatalf("Failed to create store: %v", err)
+    }
+    
+    // Create store transport
+    transport := govisual.NewStoreTransport(sharedStore)
+    
+    // Create gRPC agent
+    agent := govisual.NewGRPCAgent(transport,
+        govisual.WithGRPCRequestDataLogging(true),
+        govisual.WithGRPCResponseDataLogging(true),
+    )
+    
+    // Create gRPC server with agent
+    server := govisual.NewGRPCServer(agent)
+    proto.RegisterYourServiceServer(server, &YourServiceImpl{})
+    
+    // Start server
+    lis, err := net.Listen("tcp", ":9000")
+    if err != nil {
+        log.Fatalf("Failed to listen: %v", err)
+    }
+    log.Println("Starting gRPC server on :9000")
+    if err := server.Serve(lis); err != nil {
+        log.Fatalf("Failed to serve: %v", err)
+    }
+}
+```
+
+#### HTTP Transport (Remote Services)
+
+```go
+// Create HTTP transport
+transport := govisual.NewHTTPTransport("http://dashboard-server:8080/api/agent/logs",
+    govisual.WithTimeout(5*time.Second),
+    govisual.WithMaxRetries(3),
+)
+
+// Create gRPC agent
+agent := govisual.NewGRPCAgent(transport,
+    govisual.WithGRPCRequestDataLogging(true),
+    govisual.WithGRPCResponseDataLogging(true),
+    govisual.WithBatchingEnabled(true),
+    govisual.WithBatchSize(10),
+    govisual.WithBatchInterval(3*time.Second),
+)
+```
+
+#### NATS Transport (Distributed Systems)
+
+```go
+// Create NATS transport
+transport, err := govisual.NewNATSTransport("nats://nats-server:4222",
+    govisual.WithMaxRetries(5),
+    govisual.WithCredentials(map[string]string{
+        "username": "user",
+        "password": "pass",
+    }),
+)
+if err != nil {
+    log.Fatalf("Failed to create NATS transport: %v", err)
+}
+
+// Create gRPC agent
+agent := govisual.NewGRPCAgent(transport,
+    govisual.WithGRPCRequestDataLogging(true),
+    govisual.WithGRPCResponseDataLogging(true),
+)
+```
+
+### 3. Setting Up HTTP Agents
+
+For HTTP services, use the HTTP agent:
+
+```go
+// Create transport 
+transport := govisual.NewHTTPTransport("http://dashboard-server:8080/api/agent/logs")
+
+// Create HTTP agent
+agent := govisual.NewHTTPAgent(transport,
+    govisual.WithHTTPRequestBodyLogging(true),
+    govisual.WithHTTPResponseBodyLogging(true),
+    govisual.WithMaxBodySize(1024*1024), // 1MB
+    govisual.WithIgnorePaths("/health", "/metrics"),
+    govisual.WithIgnoreExtensions(".jpg", ".png", ".css"),
+)
+
+// Apply as middleware to your HTTP server
+mux := http.NewServeMux()
+mux.HandleFunc("/", yourHandler)
+
+// Wrap with agent middleware
+http.ListenAndServe(":8000", agent.Middleware(mux))
+```
+
+## Configuration Options
+
+### Agent Options
+
+#### Common Options
+
+```go
+// Set maximum buffer size for when transport is unavailable
+govisual.WithMaxBufferSize(100)
+
+// Enable batching to reduce transport overhead
+govisual.WithBatchingEnabled(true)
+
+// Set batch size
+govisual.WithBatchSize(20)
+
+// Set batch interval
+govisual.WithBatchInterval(5*time.Second)
+
+// Add filtering to exclude certain requests
+govisual.WithFilter(func(log *model.RequestLog) bool {
+    // Skip health check endpoints
+    if log.Type == model.TypeHTTP && log.Path == "/health" {
+        return false
+    }
+    return true
+})
+
+// Add processing to modify or clean up logs before transport
+govisual.WithProcessor(func(log *model.RequestLog) *model.RequestLog {
+    // Redact sensitive information
+    if log.Type == model.TypeHTTP && strings.Contains(log.Path, "/auth") {
+        log.RequestBody = "[REDACTED]"
+    }
+    return log
+})
+```
+
+#### gRPC Agent Options
+
+```go
+// Log request message data
+govisual.WithGRPCRequestDataLogging(true)
+
+// Log response message data
+govisual.WithGRPCResponseDataLogging(true)
+
+// Ignore specific gRPC methods
+govisual.WithIgnoreGRPCMethods(
+    "/health.HealthService/Check",
+    "/grpc.reflection.v1.ReflectionService/*",
+)
+```
+
+#### HTTP Agent Options
+
+```go
+// Log request bodies
+govisual.WithHTTPRequestBodyLogging(true)
+
+// Log response bodies
+govisual.WithHTTPResponseBodyLogging(true)
+
+// Set maximum body size to log
+govisual.WithMaxBodySize(512*1024) // 512KB
+
+// Ignore specific paths
+govisual.WithIgnorePaths("/health", "/metrics", "/favicon.ico")
+
+// Ignore specific file extensions
+govisual.WithIgnoreExtensions(".jpg", ".png", ".gif", ".css", ".js")
+
+// Transform paths before logging (e.g., to normalize UUIDs)
+govisual.WithPathTransformer(func(path string) string {
+    // Replace UUIDs with placeholders
+    return regexp.MustCompile(`/users/[0-9a-f-]{36}`).
+        ReplaceAllString(path, "/users/:id")
+})
+```
+
+### Transport Options
+
+```go
+// Set endpoint for HTTP transport
+govisual.WithEndpoint("http://dashboard-server:8080/api/agent/logs")
+
+// Add authentication credentials
+govisual.WithCredentials(map[string]string{
+    "token": "your-auth-token",
+    "api_key": "your-api-key",
+})
+
+// Configure retries
+govisual.WithMaxRetries(5)
+govisual.WithRetryWait(2*time.Second)
+
+// Set timeout
+govisual.WithTimeout(10*time.Second)
+
+// Set buffer size for when transport is unavailable
+govisual.WithBufferSize(200)
+```
+
+## Deployment Scenarios
+
+### Single Service (Development)
+
+For local development with a single service, use the shared store transport:
+
+```
+┌──────────────────┐
+│  Single Service  │
+│                  │
+│ ┌─────────────┐  │
+│ │  gRPC/HTTP  │  │
+│ │   Agent     │  │
+│ └─────┬───────┘  │
+│       │          │
+│ ┌─────▼───────┐  │
+│ │   Shared    │  │
+│ │    Store    │  │
+│ └─────┬───────┘  │
+│       │          │
+│ ┌─────▼───────┐  │
+│ │  Dashboard  │  │
+│ └─────────────┘  │
+└──────────────────┘
+```
+
+### Multiple Services (Single Machine)
+
+For multiple services on a single machine, use the shared store transport:
+
+```
+┌──────────────────┐  ┌──────────────────┐
+│  Service A (gRPC)│  │  Service B (HTTP)│
+│                  │  │                  │
+│ ┌─────────────┐  │  │ ┌─────────────┐  │
+│ │ gRPC Agent  │  │  │ │ HTTP Agent  │  │
+│ └──────┬──────┘  │  │ └──────┬──────┘  │
+└────────┼─────────┘  └────────┼─────────┘
+         │                     │
+         ▼                     ▼
+┌───────────────────────────────────────┐
+│               Shared Store             │
+└─────────────────┬─────────────────────┘
+                  │
+┌─────────────────▼─────────────────────┐
+│            Dashboard Server            │
+└───────────────────────────────────────┘
+```
+
+### Distributed Services (Multiple Machines)
+
+For distributed services, use the HTTP or NATS transport:
+
+```
+┌──────────────────┐  ┌──────────────────┐
+│  Service A (gRPC)│  │  Service B (HTTP)│
+│                  │  │                  │
+│ ┌─────────────┐  │  │ ┌─────────────┐  │
+│ │ gRPC Agent  │  │  │ │ HTTP Agent  │  │
+│ └──────┬──────┘  │  │ └──────┬──────┘  │
+└────────┼─────────┘  └────────┼─────────┘
+         │                     │
+         │                     │
+         ▼                     ▼
+┌───────────────────────────────────────┐
+│          Transport Layer              │
+│      (NATS or HTTP Transport)         │
+└─────────────────┬─────────────────────┘
+                  │
+                  │
+┌─────────────────▼─────────────────────┐
+│            Dashboard Server            │
+│                                        │
+│ ┌────────────────────────────────────┐ │
+│ │           Store Backend            │ │
+│ └────────────────────────────────────┘ │
+└───────────────────────────────────────┘
+```
+
+## Best Practices
+
+### Security Considerations
+
+1. **Data Privacy**: Use the processor option to redact sensitive information from logs before transport:
+
+```go
+govisual.WithProcessor(func(log *model.RequestLog) *model.RequestLog {
+    // Redact authentication tokens
+    if log.Type == model.TypeHTTP {
+        // Redact Authorization headers
+        if auth, ok := log.RequestHeaders["Authorization"]; ok {
+            log.RequestHeaders["Authorization"] = []string{"[REDACTED]"}
+        }
+        
+        // Redact sensitive JSON fields in bodies
+        if strings.Contains(log.Path, "/users") || strings.Contains(log.Path, "/accounts") {
+            // Use a JSON parser to selectively redact fields
+            if strings.Contains(log.RequestBody, "password") || 
+               strings.Contains(log.RequestBody, "credit_card") {
+                // Replace with redacted version
+                log.RequestBody = redactSensitiveJSON(log.RequestBody)  
+            }
+        }
+    }
+    return log
+})
+```
+
+2. **Transport Security**: Use secure connections for remote transports:
+
+```go
+// For HTTP transport
+transport := govisual.NewHTTPTransport("https://dashboard-server:8080/api/agent/logs",
+    govisual.WithCredentials(map[string]string{
+        "token": "your-secure-token",
+    }),
+)
+
+// For NATS transport with TLS
+transport, err := govisual.NewNATSTransport("nats://nats-server:4222",
+    govisual.WithCredentials(map[string]string{
+        "token": "your-nats-token",
+    }),
+    // Add TLS configurations
+)
+```
+
+### Performance Considerations
+
+1. **Batching**: Enable batching to reduce network overhead for remote transports:
+
+```go
+agent := govisual.NewGRPCAgent(transport,
+    govisual.WithBatchingEnabled(true),
+    govisual.WithBatchSize(20),
+    govisual.WithBatchInterval(5*time.Second),
+)
+```
+
+2. **Filtering**: Filter out high-volume, low-value requests to reduce load:
+
+```go
+govisual.WithFilter(func(log *model.RequestLog) bool {
+    // Skip static assets
+    if log.Type == model.TypeHTTP {
+        if strings.HasPrefix(log.Path, "/static/") || 
+           strings.HasPrefix(log.Path, "/assets/") {
+            return false
+        }
+    }
+    
+    // Skip health checks and metrics endpoints
+    if log.Type == model.TypeGRPC && 
+       (strings.Contains(log.GRPCService, "Health") || 
+        strings.Contains(log.GRPCService, "Metrics")) {
+        return false
+    }
+    
+    return true
+})
+```
+
+3. **Body Size Limits**: Limit the size of request/response bodies to prevent memory issues:
+
+```go
+// For HTTP agent
+govisual.WithMaxBodySize(512*1024)  // 512KB limit
+
+// For gRPC agent, process large messages
+govisual.WithProcessor(func(log *model.RequestLog) *model.RequestLog {
+    // Truncate large request/response data
+    const maxSize = 1024 * 1024  // 1MB
+    
+    if log.Type == model.TypeGRPC {
+        if len(log.GRPCRequestData) > maxSize {
+            log.GRPCRequestData = log.GRPCRequestData[:maxSize] + "... [TRUNCATED]"
+        }
+        
+        if len(log.GRPCResponseData) > maxSize {
+            log.GRPCResponseData = log.GRPCResponseData[:maxSize] + "... [TRUNCATED]"
+        }
+    }
+    
+    return log
+})
+```
+
+### Monitoring & Troubleshooting
+
+Add logging to help debug agent and transport issues:
+
+```go
+// Create a processor that logs when errors occur
+govisual.WithProcessor(func(log *model.RequestLog) *model.RequestLog {
+    if log.Error != "" {
+        internalLogger.Debugf("Request error captured: %s, path: %s", log.Error, log.Path)
+    }
+    
+    // For gRPC status codes other than OK
+    if log.Type == model.TypeGRPC && log.GRPCStatusCode != 0 {
+        internalLogger.Debugf("gRPC request failed: status=%d, desc=%s, method=%s/%s",
+            log.GRPCStatusCode, log.GRPCStatusDesc, log.GRPCService, log.GRPCMethod)
+    }
+    
+    return log
+})
+```
+
+## Advanced Use Cases
+
+### Custom Transport Implementation
+
+You can implement your own transport by implementing the `transport.Transport` interface:
+
+```go
+type CustomTransport struct {
+    // Custom fields
+}
+
+func NewCustomTransport() *CustomTransport {
+    return &CustomTransport{}
+}
+
+func (t *CustomTransport) Send(log *model.RequestLog) error {
+    // Implement your custom sending logic
+    return nil
+}
+
+func (t *CustomTransport) SendBatch(logs []*model.RequestLog) error {
+    // Implement your custom batch sending logic
+    return nil
+}
+
+func (t *CustomTransport) Close() error {
+    // Clean up resources
+    return nil
+}
+```
+
+### Multiple Transport Targets
+
+To send data to multiple visualization servers, create a composite transport:
+
+```go
+type CompositeTransport struct {
+    transports []transport.Transport
+}
+
+func NewCompositeTransport(transports ...transport.Transport) *CompositeTransport {
+    return &CompositeTransport{
+        transports: transports,
+    }
+}
+
+func (t *CompositeTransport) Send(log *model.RequestLog) error {
+    var lastErr error
+    for _, transport := range t.transports {
+        if err := transport.Send(log); err != nil {
+            lastErr = err
+        }
+    }
+    return lastErr
+}
+
+func (t *CompositeTransport) SendBatch(logs []*model.RequestLog) error {
+    var lastErr error
+    for _, transport := range t.transports {
+        if err := transport.SendBatch(logs); err != nil {
+            lastErr = err
+        }
+    }
+    return lastErr
+}
+
+func (t *CompositeTransport) Close() error {
+    var lastErr error
+    for _, transport := range t.transports {
+        if err := transport.Close(); err != nil {
+            lastErr = err
+        }
+    }
+    return lastErr
+}
+
+// Usage
+httpTransport := govisual.NewHTTPTransport("http://dashboard-1:8080/api/agent/logs")
+natsTransport, _ := govisual.NewNATSTransport("nats://nats-server:4222")
+compositeTransport := NewCompositeTransport(httpTransport, natsTransport)
+
+agent := govisual.NewGRPCAgent(compositeTransport)
+```
+
+## Compatibility with Existing Code
+
+The agent architecture is designed to be backward compatible with the existing GoVisual API. You can gradually migrate your codebase to use agents:
+
+### Before (Direct Dashboard)
+
+```go
+grpcServer := grpc.NewServer(
+    govisual.WrapGRPCServer(
+        govisual.WithGRPC(true),
+        govisual.WithGRPCRequestDataLogging(true),
+        govisual.WithGRPCResponseDataLogging(true),
+    )...)
+```
+
+### After (Agent Architecture)
+
+```go
+// Create transport
+transport := govisual.NewStoreTransport(sharedStore)
+
+// Create agent
+agent := govisual.NewGRPCAgent(transport,
+    govisual.WithGRPCRequestDataLogging(true),
+    govisual.WithGRPCResponseDataLogging(true),
+)
+
+// Create server with agent
+grpcServer := govisual.NewGRPCServer(agent)
+```
+
+## Conclusion
+
+The agent architecture provides a flexible way to collect and visualize request data from distributed services. By separating data collection (agents) from visualization (dashboard), GoVisual can now monitor complex, multi-service architectures while providing options for different deployment scenarios.
+
+Choose the right transport mechanism based on your deployment needs:
+
+- **Shared Store**: For services running on the same machine
+- **HTTP Transport**: For remote services with direct HTTP connectivity
+- **NATS Transport**: For distributed systems where a message broker is available
+
+The architecture is designed to be extensible, allowing for custom transport implementations and advanced use cases.
+
+--- End File: grpc_agent/README.md
+
+--- Start File: grpc_agent/gen/greeter/v1/greeter.pb.go
+// Code generated by protoc-gen-go. DO NOT EDIT.
+// versions:
+// 	protoc-gen-go v1.36.6
+// 	protoc        (unknown)
+// source: greeter/v1/greeter.proto
+
+package greeterv1
+
+import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+)
+
+const (
+	// Verify that this generated code is sufficiently up-to-date.
+	_ = protoimpl.EnforceVersion(20 - protoimpl.MinVersion)
+	// Verify that runtime/protoimpl is sufficiently up-to-date.
+	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
+)
+
+// The request message containing the user's name.
+type HelloRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HelloRequest) Reset() {
+	*x = HelloRequest{}
+	mi := &file_greeter_v1_greeter_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HelloRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HelloRequest) ProtoMessage() {}
+
+func (x *HelloRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_greeter_v1_greeter_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HelloRequest.ProtoReflect.Descriptor instead.
+func (*HelloRequest) Descriptor() ([]byte, []int) {
+	return file_greeter_v1_greeter_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *HelloRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *HelloRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// The response message containing the greetings.
+type HelloReply struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HelloReply) Reset() {
+	*x = HelloReply{}
+	mi := &file_greeter_v1_greeter_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HelloReply) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HelloReply) ProtoMessage() {}
+
+func (x *HelloReply) ProtoReflect() protoreflect.Message {
+	mi := &file_greeter_v1_greeter_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HelloReply.ProtoReflect.Descriptor instead.
+func (*HelloReply) Descriptor() ([]byte, []int) {
+	return file_greeter_v1_greeter_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *HelloReply) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *HelloReply) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+var File_greeter_v1_greeter_proto protoreflect.FileDescriptor
+
+const file_greeter_v1_greeter_proto_rawDesc = "" +
+	"\n" +
+	"\x18greeter/v1/greeter.proto\x12\n" +
+	"greeter.v1\"<\n" +
+	"\fHelloRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"D\n" +
+	"\n" +
+	"HelloReply\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2\xa4\x02\n" +
+	"\x0eGreeterService\x12>\n" +
+	"\bSayHello\x12\x18.greeter.v1.HelloRequest\x1a\x16.greeter.v1.HelloReply\"\x00\x12F\n" +
+	"\x0eSayHelloStream\x12\x18.greeter.v1.HelloRequest\x1a\x16.greeter.v1.HelloReply\"\x000\x01\x12E\n" +
+	"\rCollectHellos\x12\x18.greeter.v1.HelloRequest\x1a\x16.greeter.v1.HelloReply\"\x00(\x01\x12C\n" +
+	"\tChatHello\x12\x18.greeter.v1.HelloRequest\x1a\x16.greeter.v1.HelloReply\"\x00(\x010\x01B\xad\x01\n" +
+	"\x0ecom.greeter.v1B\fGreeterProtoP\x01ZDgithub.com/doganarif/govisual/examples/grpc/gen/greeter/v1;greeterv1\xa2\x02\x03GXX\xaa\x02\n" +
+	"Greeter.V1\xca\x02\n" +
+	"Greeter\\V1\xe2\x02\x16Greeter\\V1\\GPBMetadata\xea\x02\vGreeter::V1b\x06proto3"
+
+var (
+	file_greeter_v1_greeter_proto_rawDescOnce sync.Once
+	file_greeter_v1_greeter_proto_rawDescData []byte
+)
+
+func file_greeter_v1_greeter_proto_rawDescGZIP() []byte {
+	file_greeter_v1_greeter_proto_rawDescOnce.Do(func() {
+		file_greeter_v1_greeter_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_greeter_v1_greeter_proto_rawDesc), len(file_greeter_v1_greeter_proto_rawDesc)))
+	})
+	return file_greeter_v1_greeter_proto_rawDescData
+}
+
+var file_greeter_v1_greeter_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_greeter_v1_greeter_proto_goTypes = []any{
+	(*HelloRequest)(nil), // 0: greeter.v1.HelloRequest
+	(*HelloReply)(nil),   // 1: greeter.v1.HelloReply
+}
+var file_greeter_v1_greeter_proto_depIdxs = []int32{
+	0, // 0: greeter.v1.GreeterService.SayHello:input_type -> greeter.v1.HelloRequest
+	0, // 1: greeter.v1.GreeterService.SayHelloStream:input_type -> greeter.v1.HelloRequest
+	0, // 2: greeter.v1.GreeterService.CollectHellos:input_type -> greeter.v1.HelloRequest
+	0, // 3: greeter.v1.GreeterService.ChatHello:input_type -> greeter.v1.HelloRequest
+	1, // 4: greeter.v1.GreeterService.SayHello:output_type -> greeter.v1.HelloReply
+	1, // 5: greeter.v1.GreeterService.SayHelloStream:output_type -> greeter.v1.HelloReply
+	1, // 6: greeter.v1.GreeterService.CollectHellos:output_type -> greeter.v1.HelloReply
+	1, // 7: greeter.v1.GreeterService.ChatHello:output_type -> greeter.v1.HelloReply
+	4, // [4:8] is the sub-list for method output_type
+	0, // [0:4] is the sub-list for method input_type
+	0, // [0:0] is the sub-list for extension type_name
+	0, // [0:0] is the sub-list for extension extendee
+	0, // [0:0] is the sub-list for field type_name
+}
+
+func init() { file_greeter_v1_greeter_proto_init() }
+func file_greeter_v1_greeter_proto_init() {
+	if File_greeter_v1_greeter_proto != nil {
+		return
+	}
+	type x struct{}
+	out := protoimpl.TypeBuilder{
+		File: protoimpl.DescBuilder{
+			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_greeter_v1_greeter_proto_rawDesc), len(file_greeter_v1_greeter_proto_rawDesc)),
+			NumEnums:      0,
+			NumMessages:   2,
+			NumExtensions: 0,
+			NumServices:   1,
+		},
+		GoTypes:           file_greeter_v1_greeter_proto_goTypes,
+		DependencyIndexes: file_greeter_v1_greeter_proto_depIdxs,
+		MessageInfos:      file_greeter_v1_greeter_proto_msgTypes,
+	}.Build()
+	File_greeter_v1_greeter_proto = out.File
+	file_greeter_v1_greeter_proto_goTypes = nil
+	file_greeter_v1_greeter_proto_depIdxs = nil
+}
+
+--- End File: grpc_agent/gen/greeter/v1/greeter.pb.go
+
+--- Start File: grpc_agent/gen/greeter/v1/greeter_grpc.pb.go
+// Code generated by protoc-gen-go-grpc. DO NOT EDIT.
+// versions:
+// - protoc-gen-go-grpc v1.5.1
+// - protoc             (unknown)
+// source: greeter/v1/greeter.proto
+
+package greeterv1
+
+import (
+	context "context"
+	grpc "google.golang.org/grpc"
+	codes "google.golang.org/grpc/codes"
+	status "google.golang.org/grpc/status"
+)
+
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the grpc package it is being compiled against.
+// Requires gRPC-Go v1.64.0 or later.
+const _ = grpc.SupportPackageIsVersion9
+
+const (
+	GreeterService_SayHello_FullMethodName       = "/greeter.v1.GreeterService/SayHello"
+	GreeterService_SayHelloStream_FullMethodName = "/greeter.v1.GreeterService/SayHelloStream"
+	GreeterService_CollectHellos_FullMethodName  = "/greeter.v1.GreeterService/CollectHellos"
+	GreeterService_ChatHello_FullMethodName      = "/greeter.v1.GreeterService/ChatHello"
+)
+
+// GreeterServiceClient is the client API for GreeterService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// The greeting service definition.
+type GreeterServiceClient interface {
+	// Sends a greeting (Unary RPC)
+	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error)
+	// Sends multiple greetings in response to a single request (Server streaming RPC)
+	SayHelloStream(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[HelloReply], error)
+	// Collects multiple greetings and responds once (Client streaming RPC)
+	CollectHellos(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[HelloRequest, HelloReply], error)
+	// Chat with greetings back and forth (Bidirectional streaming RPC)
+	ChatHello(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[HelloRequest, HelloReply], error)
+}
+
+type greeterServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewGreeterServiceClient(cc grpc.ClientConnInterface) GreeterServiceClient {
+	return &greeterServiceClient{cc}
+}
+
+func (c *greeterServiceClient) SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HelloReply)
+	err := c.cc.Invoke(ctx, GreeterService_SayHello_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *greeterServiceClient) SayHelloStream(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[HelloReply], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &GreeterService_ServiceDesc.Streams[0], GreeterService_SayHelloStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[HelloRequest, HelloReply]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreeterService_SayHelloStreamClient = grpc.ServerStreamingClient[HelloReply]
+
+func (c *greeterServiceClient) CollectHellos(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[HelloRequest, HelloReply], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &GreeterService_ServiceDesc.Streams[1], GreeterService_CollectHellos_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[HelloRequest, HelloReply]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreeterService_CollectHellosClient = grpc.ClientStreamingClient[HelloRequest, HelloReply]
+
+func (c *greeterServiceClient) ChatHello(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[HelloRequest, HelloReply], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &GreeterService_ServiceDesc.Streams[2], GreeterService_ChatHello_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[HelloRequest, HelloReply]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreeterService_ChatHelloClient = grpc.BidiStreamingClient[HelloRequest, HelloReply]
+
+// GreeterServiceServer is the server API for GreeterService service.
+// All implementations should embed UnimplementedGreeterServiceServer
+// for forward compatibility.
+//
+// The greeting service definition.
+type GreeterServiceServer interface {
+	// Sends a greeting (Unary RPC)
+	SayHello(context.Context, *HelloRequest) (*HelloReply, error)
+	// Sends multiple greetings in response to a single request (Server streaming RPC)
+	SayHelloStream(*HelloRequest, grpc.ServerStreamingServer[HelloReply]) error
+	// Collects multiple greetings and responds once (Client streaming RPC)
+	CollectHellos(grpc.ClientStreamingServer[HelloRequest, HelloReply]) error
+	// Chat with greetings back and forth (Bidirectional streaming RPC)
+	ChatHello(grpc.BidiStreamingServer[HelloRequest, HelloReply]) error
+}
+
+// UnimplementedGreeterServiceServer should be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedGreeterServiceServer struct{}
+
+func (UnimplementedGreeterServiceServer) SayHello(context.Context, *HelloRequest) (*HelloReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SayHello not implemented")
+}
+func (UnimplementedGreeterServiceServer) SayHelloStream(*HelloRequest, grpc.ServerStreamingServer[HelloReply]) error {
+	return status.Errorf(codes.Unimplemented, "method SayHelloStream not implemented")
+}
+func (UnimplementedGreeterServiceServer) CollectHellos(grpc.ClientStreamingServer[HelloRequest, HelloReply]) error {
+	return status.Errorf(codes.Unimplemented, "method CollectHellos not implemented")
+}
+func (UnimplementedGreeterServiceServer) ChatHello(grpc.BidiStreamingServer[HelloRequest, HelloReply]) error {
+	return status.Errorf(codes.Unimplemented, "method ChatHello not implemented")
+}
+func (UnimplementedGreeterServiceServer) testEmbeddedByValue() {}
+
+// UnsafeGreeterServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to GreeterServiceServer will
+// result in compilation errors.
+type UnsafeGreeterServiceServer interface {
+	mustEmbedUnimplementedGreeterServiceServer()
+}
+
+func RegisterGreeterServiceServer(s grpc.ServiceRegistrar, srv GreeterServiceServer) {
+	// If the following call pancis, it indicates UnimplementedGreeterServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&GreeterService_ServiceDesc, srv)
+}
+
+func _GreeterService_SayHello_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HelloRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GreeterServiceServer).SayHello(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GreeterService_SayHello_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GreeterServiceServer).SayHello(ctx, req.(*HelloRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _GreeterService_SayHelloStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(HelloRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(GreeterServiceServer).SayHelloStream(m, &grpc.GenericServerStream[HelloRequest, HelloReply]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreeterService_SayHelloStreamServer = grpc.ServerStreamingServer[HelloReply]
+
+func _GreeterService_CollectHellos_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(GreeterServiceServer).CollectHellos(&grpc.GenericServerStream[HelloRequest, HelloReply]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreeterService_CollectHellosServer = grpc.ClientStreamingServer[HelloRequest, HelloReply]
+
+func _GreeterService_ChatHello_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(GreeterServiceServer).ChatHello(&grpc.GenericServerStream[HelloRequest, HelloReply]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreeterService_ChatHelloServer = grpc.BidiStreamingServer[HelloRequest, HelloReply]
+
+// GreeterService_ServiceDesc is the grpc.ServiceDesc for GreeterService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var GreeterService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "greeter.v1.GreeterService",
+	HandlerType: (*GreeterServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SayHello",
+			Handler:    _GreeterService_SayHello_Handler,
+		},
+	},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "SayHelloStream",
+			Handler:       _GreeterService_SayHelloStream_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "CollectHellos",
+			Handler:       _GreeterService_CollectHellos_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ChatHello",
+			Handler:       _GreeterService_ChatHello_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
+	Metadata: "greeter/v1/greeter.proto",
+}
+
+--- End File: grpc_agent/gen/greeter/v1/greeter_grpc.pb.go
+
+--- Start File: grpc_agent/grpc_server.go
+package main
+
+import (
+	"context"
+	pb_greeter "example/gen/greeter/v1"
+	"fmt"
+	"log"
+	"time"
+)
+
+// Server is used to implement the GreeterServiceServer.
+type Server struct {
+	pb_greeter.UnimplementedGreeterServiceServer
+}
+
+// SayHello implements the SayHello RPC method.
+func (s *Server) SayHello(ctx context.Context, req *pb_greeter.HelloRequest) (*pb_greeter.HelloReply, error) {
+	log.Printf("Received: %v", req.GetName())
+	return &pb_greeter.HelloReply{
+		Message:   "Hello " + req.GetName(),
+		Timestamp: time.Now().Unix(),
+	}, nil
+}
+
+// SayHelloStream implements the server streaming RPC method.
+func (s *Server) SayHelloStream(req *pb_greeter.HelloRequest, stream pb_greeter.GreeterService_SayHelloStreamServer) error {
+	log.Printf("Received stream request: %v", req.GetName())
+
+	for i := 0; i < 5; i++ {
+		if err := stream.Send(&pb_greeter.HelloReply{
+			Message:   fmt.Sprintf("Hello %s! (response #%d)", req.GetName(), i+1),
+			Timestamp: time.Now().Unix(),
+		}); err != nil {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// CollectHellos implements the client streaming RPC method.
+func (s *Server) CollectHellos(stream pb_greeter.GreeterService_CollectHellosServer) error {
+	var names []string
+
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		names = append(names, req.GetName())
+	}
+
+	var message string
+	if len(names) == 0 {
+		message = "Hello to nobody!"
+	} else if len(names) == 1 {
+		message = fmt.Sprintf("Hello to %s!", names[0])
+	} else {
+		message = fmt.Sprintf("Hello to %d people!", len(names))
+	}
+
+	return stream.SendAndClose(&pb_greeter.HelloReply{
+		Message:   message,
+		Timestamp: time.Now().Unix(),
+	})
+}
+
+// ChatHello implements the bidirectional streaming RPC method.
+func (s *Server) ChatHello(stream pb_greeter.GreeterService_ChatHelloServer) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return nil
+		}
+
+		if err := stream.Send(&pb_greeter.HelloReply{
+			Message:   "Hello " + req.GetName() + "!",
+			Timestamp: time.Now().Unix(),
+		}); err != nil {
+			return err
+		}
+	}
+}
+
+--- End File: grpc_agent/grpc_server.go
+
+--- Start File: grpc_agent/main.go
+package main
+
+import (
+	"context"
+	pb_greeter "example/gen/greeter/v1"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/doganarif/govisual"
+	"github.com/doganarif/govisual/pkg/agent"
+	"github.com/doganarif/govisual/pkg/server"
+	"github.com/doganarif/govisual/pkg/store"
+	"github.com/doganarif/govisual/pkg/transport"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+var (
+	port      = flag.Int("port", 8080, "HTTP server port (for dashboard)")
+	grpcPort  = flag.Int("grpc-port", 9090, "gRPC server port")
+	agentMode = flag.String("agent-mode", "store", "Agent mode: store, nats, http")
+	natsURL   = flag.String("nats-url", "nats://localhost:4222", "NATS server URL. Only used with agent-mode 'nats'")
+	httpURL   = flag.String("http-url", "http://localhost:8080/api/agent/logs", "HTTP endpoint URL. Only used with agent-mode 'http'")
+)
+
+func main() {
+	flag.Parse()
+
+	err := run()
+	if err != nil {
+		fmt.Printf("failed to run: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	sharedStore := store.NewInMemoryStore(100)
+
+	var transportObj transport.Transport
+	var err error
+	switch *agentMode {
+	case "store":
+		log.Info("Using shared store transport")
+		transportObj = transport.NewStoreTransport(sharedStore)
+	case "nats":
+		log.Info("Using NATS transport", slog.String("url", *natsURL))
+		transportObj, err = transport.NewNATSTransport(*natsURL)
+		if err != nil {
+			return fmt.Errorf("creating NATS transport: %w", err)
+		}
+	case "http":
+		log.Info("Using HTTP transport", slog.String("url", *httpURL))
+		transportObj = transport.NewHTTPTransport(*httpURL,
+			transport.WithTimeout(5*time.Second),
+			transport.WithMaxRetries(3),
+		)
+	default:
+		return fmt.Errorf("unknown agent mode %q", *agentMode)
+	}
+
+	// Create gRPC agent with the improved option system
+	grpcAgent := agent.NewGRPCAgent(transportObj,
+		agent.WithGRPCRequestDataLogging(true),
+		agent.WithGRPCResponseDataLogging(true),
+		agent.WithBatchingEnabled(true).ForGRPC(),
+		agent.WithBatchSize(5).ForGRPC(),
+		agent.WithBatchInterval(1*time.Second).ForGRPC(),
+	)
+
+	// Start the gRPC server with the agent
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *grpcPort))
+	if err != nil {
+		return fmt.Errorf("listening to gRPC: %w", err)
+	}
+
+	grpcServer := server.NewGRPCServer(grpcAgent)
+	pb_greeter.RegisterGreeterServiceServer(grpcServer, &Server{})
+
+	log.Info("Starting gRPC server with visualisation", slog.Int("port", *grpcPort))
+
+	go func() {
+		err := grpcServer.Serve(lis)
+		if err != nil {
+			log.Error("failed to serve gRPC", slog.Any("err", err))
+			os.Exit(1)
+		}
+	}()
+
+	// Start the HTTP dashboard server
+	mux := http.NewServeMux()
+
+	// Add a simple homepage
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(fmt.Sprintf(`
+			<html>
+			<head>
+				<title>GoVisual gRPC Agent Example</title>
+				<style>
+					body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+					h1 { color: #333; }
+					.container { max-width: 800px; margin: 0 auto; }
+					.card { background: #f9f9f9; border-radius: 5px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+					.info { background: #e8f4f8; padding: 15px; border-radius: 5px; margin-bottom: 15px; }
+					a { color: #0066cc; text-decoration: none; }
+					a:hover { text-decoration: underline; }
+					.btn { display: inline-block; background: #0066cc; color: white; padding: 10px 15px; border-radius: 5px; text-decoration: none; margin-top: 10px; }
+					.btn:hover { background: #0055aa; }
+					code { background: #f0f0f0; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
+				</style>
+			</head>
+			<body>
+				<div class="container">
+					<h1>GoVisual gRPC Agent Example</h1>
+					<div class="card">
+						<h2>Dashboard</h2>
+						<p>Visit <a href="/__viz">/__viz</a> to access the request visualizer dashboard.</p>
+					</div>
+					<div class="card">
+						<h2>Configuration</h2>
+						<div class="info">
+							<strong>gRPC Server:</strong> localhost:%d<br>
+							<strong>Agent Mode:</strong> %s<br>
+							%s
+						</div>
+					</div>
+					<div class="card">
+						<h2>Test the gRPC Service</h2>
+						<p>An initial test request has been made automatically. You can make additional requests using a gRPC client.</p>
+						<p>The service provides the following methods:</p>
+						<ul>
+							<li><code>SayHello</code> - Unary RPC</li>
+							<li><code>SayHelloStream</code> - Server streaming RPC</li>
+							<li><code>CollectHellos</code> - Client streaming RPC</li>
+							<li><code>ChatHello</code> - Bidirectional streaming RPC</li>
+						</ul>
+						<p>You can use a tool like <a href="https://github.com/fullstorydev/grpcui" target="_blank">grpcui</a> or <a href="https://github.com/fullstorydev/grpcurl" target="_blank">grpcurl</a> to test these methods.</p>
+					</div>
+				</div>
+			</body>
+			</html>
+		`, *grpcPort, *agentMode, getExtraInfo())))
+	})
+
+	// Add API endpoints for agent communication
+	if *agentMode != "store" {
+		// Create and register agent API handler
+		agentAPI := server.NewAgentAPI(sharedStore)
+		agentAPI.RegisterHandlers(mux)
+	}
+
+	// Wrap with GoVisual for dashboard
+	handler := govisual.Wrap(mux,
+		govisual.WithMaxRequests(100),
+		govisual.WithRequestBodyLogging(true),
+		govisual.WithResponseBodyLogging(true),
+		govisual.WithSharedStore(sharedStore),
+	)
+
+	// Start NATS handler if using NATS transport
+	var natsHandler *server.NATSHandler
+	if *agentMode == "nats" {
+		natsHandler, err = server.NewNATSHandler(sharedStore, *natsURL)
+		if err != nil {
+			return fmt.Errorf("creating NATS handler: %w", err)
+		}
+
+		err = natsHandler.Start()
+		if err != nil {
+			return fmt.Errorf("starting NATS handler: %w", err)
+		}
+	}
+
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", *port),
+		Handler: handler,
+	}
+
+	log.Info("Started dashboard server", slog.Int("port", *port), slog.String("dashboard_addr", fmt.Sprintf("http://localhost:%d/__viz", *port)))
+
+	go func() {
+		err := httpServer.ListenAndServe()
+		if err != nil && err != http.ErrServerClosed {
+			log.Error("failed to serve HTTP", slog.Any("err", err))
+			os.Exit(1)
+		}
+	}()
+
+	// Make test requests to show different gRPC method types
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+
+		// Create gRPC client
+		conn, err := grpc.NewClient(
+			fmt.Sprintf("localhost:%d", *grpcPort),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			log.Error("Failed to connect: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		client := pb_greeter.NewGreeterServiceClient(conn)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Test 1: Unary RPC
+		log.Info("Testing unary RPC (SayHello)")
+		resp, err := client.SayHello(ctx, &pb_greeter.HelloRequest{
+			Name:    "Agent Test",
+			Message: "This is a test message",
+		})
+		if err != nil {
+			log.Error("SayHello failed", slog.Any("err", err))
+		} else {
+			log.Info("Received unary RPC response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
+		}
+
+		// Test 2: Server streaming RPC
+		log.Info("Testing server streaming RPC (SayHelloStream)")
+		stream, err := client.SayHelloStream(ctx, &pb_greeter.HelloRequest{
+			Name:    "Stream Test",
+			Message: "Testing server streaming",
+		})
+		if err != nil {
+			log.Error("SayHelloStream failed", slog.Any("err", err))
+		} else {
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					break
+				}
+				log.Info("Received server stream response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
+			}
+		}
+
+		// Test 3: Client streaming RPC
+		log.Info("Testing client streaming RPC (CollectHellos)")
+		clientStream, err := client.CollectHellos(ctx)
+		if err != nil {
+			log.Error("CollectHellos failed", slog.Any("err", err))
+		} else {
+			// Send multiple messages
+			for i := 1; i <= 3; i++ {
+				name := fmt.Sprintf("Person %d", i)
+				if err := clientStream.Send(&pb_greeter.HelloRequest{
+					Name:    name,
+					Message: fmt.Sprintf("Message from %s", name),
+				}); err != nil {
+					log.Error("failed to send client stream message", slog.Any("err", err))
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			// Close and receive response
+			resp, err := clientStream.CloseAndRecv()
+			if err != nil {
+				log.Error("failed to close client stream", slog.Any("err", err))
+			} else {
+				log.Info("Received client stream response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
+			}
+		}
+
+		// Test 4: Bidirectional streaming RPC
+		log.Info("Testing bidirectional streaming RPC (ChatHello)")
+		bidiStream, err := client.ChatHello(ctx)
+		if err != nil {
+			log.Error("ChatHello failed", slog.Any("err", err))
+		} else {
+			// Send and receive in goroutines
+			done := make(chan bool)
+
+			// Receiving goroutine
+			go func() {
+				for {
+					resp, err := bidiStream.Recv()
+					if err != nil {
+						break
+					}
+					log.Info("Received Bidi response", slog.String("msg", resp.GetMessage()), slog.Int64("timestamp", resp.GetTimestamp()))
+				}
+				done <- true
+			}()
+
+			// Send messages
+			for i := 1; i <= 3; i++ {
+				name := fmt.Sprintf("ChatPerson %d", i)
+				if err := bidiStream.Send(&pb_greeter.HelloRequest{
+					Name:    name,
+					Message: fmt.Sprintf("Bidi message from %s", name),
+				}); err != nil {
+					log.Error("failed to send bidi message: %v", err)
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+
+			// Close sending
+			bidiStream.CloseSend()
+			<-done
+		}
+
+		log.Info("All gRPC tests completed")
+	}()
+
+	// Wait for termination signal
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+	<-signalChan
+
+	log.Info("Shutdown signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Info("HTTP server shutdown error: %v", err)
+	}
+
+	grpcServer.GracefulStop()
+	lis.Close()
+
+	if natsHandler != nil {
+		err = natsHandler.Stop()
+		if err != nil {
+			log.Error("failed to stop NATS handler", slog.Any("err", err))
+		}
+	}
+
+	err = grpcAgent.Close()
+	if err != nil {
+		log.Error("failed to close agent", slog.Any("err", err))
+	}
+
+	err = transportObj.Close()
+	if err != nil {
+		log.Error("failed to close transport", slog.Any("err", err))
+	}
+
+	err = sharedStore.Close()
+	if err != nil {
+		log.Error("failed to close store", slog.Any("err", err))
+	}
+
+	log.Info("Servers shut down successfully")
+	return nil
+}
+
+// getExtraInfo returns extra information for the homepage based on the agent mode
+func getExtraInfo() string {
+	var info strings.Builder
+
+	switch *agentMode {
+	case "store":
+		info.WriteString("<strong>Transport:</strong> In-memory shared store (direct)")
+	case "nats":
+		info.WriteString(fmt.Sprintf("<strong>Transport:</strong> NATS messaging via %s", *natsURL))
+	case "http":
+		info.WriteString(fmt.Sprintf("<strong>Transport:</strong> HTTP via %s", *httpURL))
+	}
+
+	return info.String()
+}
+
+--- End File: grpc_agent/main.go

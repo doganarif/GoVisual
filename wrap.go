@@ -11,8 +11,8 @@ import (
 
 	"github.com/doganarif/govisual/internal/dashboard"
 	"github.com/doganarif/govisual/internal/middleware"
-	"github.com/doganarif/govisual/internal/store"
 	"github.com/doganarif/govisual/internal/telemetry"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 // Wrap wraps an http.Handler with request visualization middleware
@@ -23,34 +23,40 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		opt(config)
 	}
 
-	// Create store based on configuration
+	// Create or use shared store
 	var requestStore store.Store
 	var err error
 
-	storeConfig := &store.StorageConfig{
-		Type:             config.StorageType,
-		Capacity:         config.MaxRequests,
-		ConnectionString: config.ConnectionString,
-		TableName:        config.TableName,
-		TTL:              config.RedisTTL,
-		ExistingDB:       config.ExistingDB,
-	}
-
-	requestStore, err = store.NewStore(storeConfig)
-	if err != nil {
-		log.Printf("Failed to create configured storage backend: %v. Falling back to in-memory storage.", err)
-		requestStore = store.NewInMemoryStore(config.MaxRequests)
-	}
-
-	// Set up graceful shutdown for store
-	go func() {
-		signals := make(chan os.Signal, 1)
-		signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
-		<-signals
-		if err := requestStore.Close(); err != nil {
-			log.Printf("Error closing storage: %v", err)
+	// Use shared store if provided
+	if config.SharedStore != nil {
+		requestStore = config.SharedStore
+	} else {
+		// Create store based on configuration
+		storeConfig := &store.StorageConfig{
+			Type:             config.StorageType,
+			Capacity:         config.MaxRequests,
+			ConnectionString: config.ConnectionString,
+			TableName:        config.TableName,
+			TTL:              config.RedisTTL,
+			ExistingDB:       config.ExistingDB,
 		}
-	}()
+
+		requestStore, err = store.NewStore(storeConfig)
+		if err != nil {
+			log.Printf("Failed to create configured storage backend: %v. Falling back to in-memory storage.", err)
+			requestStore = store.NewInMemoryStore(config.MaxRequests)
+		}
+
+		// Set up graceful shutdown for store
+		go func() {
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+			<-signals
+			if err := requestStore.Close(); err != nil {
+				log.Printf("Error closing storage: %v", err)
+			}
+		}()
+	}
 
 	// Create middleware wrapper
 	wrapped := middleware.Wrap(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config)

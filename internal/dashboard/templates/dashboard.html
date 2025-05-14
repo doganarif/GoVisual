@@ -71,32 +71,70 @@
   function applyFilters() {
     const methodFilter = document.getElementById("method-filter").value;
     const statusFilter = document.getElementById("status-filter").value;
-    const pathFilter = document
-      .getElementById("path-filter")
-      .value.toLowerCase();
+    const pathFilter = document.getElementById("path-filter").value.toLowerCase();
     const durationFilter = document.getElementById("duration-filter").value;
+    const typeFilter = document.getElementById("type-filter").value;
 
     filteredRequests = allRequests.filter((req) => {
-      // Method filter
-      if (methodFilter && req.Method !== methodFilter) {
+      // Type filter (HTTP vs gRPC)
+      if (typeFilter && req.Type !== typeFilter) {
         return false;
+      }
+
+      // Method filter
+      if (methodFilter) {
+        if (req.Type === "grpc") {
+          // For gRPC, we filter on method type (unary, client_stream, etc.)
+          if (req.GRPCMethodType !== methodFilter) {
+            return false;
+          }
+        } else {
+          // For HTTP, we filter on HTTP method (GET, POST, etc.)
+          if (req.Method !== methodFilter) {
+            return false;
+          }
+        }
       }
 
       // Status code filter
       if (statusFilter) {
-        const firstDigit = Math.floor(req.StatusCode / 100);
-        if (statusFilter === "2xx" && firstDigit !== 2) return false;
-        if (statusFilter === "3xx" && firstDigit !== 3) return false;
-        if (statusFilter === "4xx" && firstDigit !== 4) return false;
-        if (statusFilter === "5xx" && firstDigit !== 5) return false;
+        if (req.Type === "grpc") {
+          // gRPC status codes are handled differently
+          if (statusFilter === "success" && req.GRPCStatusCode !== 0) {
+            return false;
+          } else if (statusFilter === "error" && req.GRPCStatusCode === 0) {
+            return false;
+          } else if (statusFilter.startsWith("code-")) {
+            const code = parseInt(statusFilter.substring(5));
+            if (req.GRPCStatusCode !== code) {
+              return false;
+            }
+          }
+        } else {
+          // HTTP status codes
+          const firstDigit = Math.floor(req.StatusCode / 100);
+          if (statusFilter === "2xx" && firstDigit !== 2) return false;
+          if (statusFilter === "3xx" && firstDigit !== 3) return false;
+          if (statusFilter === "4xx" && firstDigit !== 4) return false;
+          if (statusFilter === "5xx" && firstDigit !== 5) return false;
+        }
       }
 
-      // Path filter
-      if (pathFilter && !req.Path.toLowerCase().includes(pathFilter)) {
-        return false;
+      // Path/service filter
+      if (pathFilter) {
+        if (req.Type === "grpc") {
+          const servicePath = `${req.GRPCService}/${req.GRPCMethod}`.toLowerCase();
+          if (!servicePath.includes(pathFilter)) {
+            return false;
+          }
+        } else {
+          if (!req.Path.toLowerCase().includes(pathFilter)) {
+            return false;
+          }
+        }
       }
 
-      // Duration filter
+      // Duration filter - same for both types
       if (
         durationFilter &&
         (!req.Duration || req.Duration < parseInt(durationFilter))
@@ -246,6 +284,8 @@
     sortedRequests.forEach((req) => {
       const row = document.createElement("tr");
       row.setAttribute("data-id", req.ID);
+      row.setAttribute("data-type", req.Type); // Add type attribute for filtering
+
       row.addEventListener("click", function (e) {
         // Don't navigate if clicking on a checkbox or its container
         if (
@@ -258,35 +298,70 @@
 
         // Navigate to request details section and show details
         document.querySelector('[data-target="requests-section"]').click();
-        showRequestDetails(req);
-        showRequestTrace(req);
+
+        // Show appropriate details based on request type
+        if (req.Type === "grpc") {
+          showGRPCRequestDetails(req);
+        } else {
+          showRequestDetails(req);
+          showRequestTrace(req);
+        }
       });
 
       const timeCell = document.createElement("td");
       timeCell.textContent = new Date(req.Timestamp).toLocaleTimeString();
       row.appendChild(timeCell);
 
+      const typeCell = document.createElement("td");
+      if (req.Type === "grpc") {
+        typeCell.textContent = "gRPC";
+        typeCell.className = "type-grpc";
+        row.classList.add("grpc-request"); // Add class for styling
+      } else {
+        typeCell.textContent = "HTTP";
+        typeCell.className = "type-http";
+      }
+      row.appendChild(typeCell);
+
       const methodCell = document.createElement("td");
-      methodCell.textContent = req.Method;
-      // Add CSS class based on method
-      methodCell.className = "method-" + req.Method.toLowerCase();
+      if (req.Type === "grpc") {
+        methodCell.textContent = req.GRPCMethodType || "UNARY";
+        methodCell.className = "method-grpc";
+      } else {
+        methodCell.textContent = req.Method;
+        methodCell.className = "method-" + req.Method.toLowerCase();
+      }
       row.appendChild(methodCell);
 
       const pathCell = document.createElement("td");
-      pathCell.textContent = req.Path + (req.Query ? "?" + req.Query : "");
+      if (req.Type === "grpc") {
+        pathCell.textContent = `${req.GRPCService}/${req.GRPCMethod}`;
+      } else {
+        pathCell.textContent = req.Path + (req.Query ? "?" + req.Query : "");
+      }
       row.appendChild(pathCell);
 
       const statusCell = document.createElement("td");
-      statusCell.textContent = req.StatusCode;
-      // Add CSS class based on status code
-      if (req.StatusCode >= 200 && req.StatusCode < 300) {
-        statusCell.className = "status-success";
-      } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
-        statusCell.className = "status-redirect";
-      } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
-        statusCell.className = "status-client-error";
-      } else if (req.StatusCode >= 500) {
-        statusCell.className = "status-server-error";
+      if (req.Type === "grpc") {
+        statusCell.textContent = req.GRPCStatusCode;
+        // Add CSS class based on gRPC status code
+        if (req.GRPCStatusCode === 0) {
+          statusCell.className = "status-success";
+        } else {
+          statusCell.className = "status-client-error";
+        }
+      } else {
+        statusCell.textContent = req.StatusCode;
+        // Add CSS class based on HTTP status code
+        if (req.StatusCode >= 200 && req.StatusCode < 300) {
+          statusCell.className = "status-success";
+        } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
+          statusCell.className = "status-redirect";
+        } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
+          statusCell.className = "status-client-error";
+        } else if (req.StatusCode >= 500) {
+          statusCell.className = "status-server-error";
+        }
       }
       row.appendChild(statusCell);
 
@@ -308,6 +383,211 @@
     });
   }
 
+  // Function to show gRPC request details
+  function showGRPCRequestDetails(req) {
+    selectedRequestId = req.ID;
+
+    // Hide HTTP-specific trace view
+    document.getElementById("traceContainer").style.display = "none";
+
+    // Show gRPC details container
+    const grpcDetailsContainer = document.getElementById("grpcRequestDetails");
+    if (!grpcDetailsContainer) {
+      // Create container if it doesn't exist yet
+      createGRPCDetailsContainer();
+    }
+
+    document.getElementById("grpcRequestDetails").style.display = "block";
+    document.getElementById("requestDetails").style.display = "none"; // Hide HTTP details
+
+    // Fill in basic request information
+    document.getElementById("grpc-detail-id").textContent = req.ID;
+    document.getElementById("grpc-detail-time").textContent = new Date(
+      req.Timestamp
+    ).toLocaleString();
+    document.getElementById("grpc-detail-service").textContent = req.GRPCService;
+    document.getElementById("grpc-detail-method").textContent = req.GRPCMethod;
+    document.getElementById("grpc-detail-type").textContent = req.GRPCMethodType;
+    document.getElementById("grpc-detail-peer").textContent = req.GRPCPeer || "N/A";
+
+    // Status and error handling
+    const statusElement = document.getElementById("grpc-detail-status");
+    statusElement.textContent = req.GRPCStatusCode + (req.GRPCStatusDesc ? ` (${req.GRPCStatusDesc})` : "");
+
+    // Apply status styling
+    if (req.GRPCStatusCode === 0) {
+      statusElement.className = "status-success";
+    } else {
+      statusElement.className = "status-client-error";
+    }
+
+    document.getElementById("grpc-detail-duration").textContent =
+      req.Duration !== undefined && req.Duration !== null
+        ? req.Duration + " ms"
+        : "N/A";
+
+    // Handle error display
+    const errorContainer = document.getElementById("grpc-error-container");
+    if (req.Error) {
+      errorContainer.style.display = "block";
+      document.getElementById("grpc-detail-error").textContent = req.Error;
+    } else {
+      errorContainer.style.display = "none";
+    }
+
+    // Format and display metadata
+    const requestMDElement = document.getElementById("grpc-detail-request-md");
+    requestMDElement.textContent = formatGRPCMetadata(req.GRPCRequestMD);
+
+    const responseMDElement = document.getElementById("grpc-detail-response-md");
+    responseMDElement.textContent = formatGRPCMetadata(req.GRPCResponseMD);
+
+    // Handle request and response data
+    const requestDataContainer = document.getElementById("grpc-request-data-container");
+    const requestDataElement = document.getElementById("grpc-detail-request-data");
+
+    if (req.GRPCRequestData) {
+      requestDataContainer.style.display = "block";
+      requestDataElement.textContent = formatBody(req.GRPCRequestData);
+    } else {
+      requestDataContainer.style.display = "none";
+    }
+
+    const responseDataContainer = document.getElementById("grpc-response-data-container");
+    const responseDataElement = document.getElementById("grpc-detail-response-data");
+
+    if (req.GRPCResponseData) {
+      responseDataContainer.style.display = "block";
+      responseDataElement.textContent = formatBody(req.GRPCResponseData);
+    } else {
+      responseDataContainer.style.display = "none";
+    }
+
+    // Handle streaming messages if present
+    const messagesContainer = document.getElementById("grpc-messages-container");
+    const messagesElement = document.getElementById("grpc-messages-list");
+
+    if (req.GRPCMessages && req.GRPCMessages.length > 0) {
+      messagesContainer.style.display = "block";
+      messagesElement.innerHTML = ""; // Clear previous messages
+
+      // Create a timeline of messages
+      req.GRPCMessages.forEach((msg, index) => {
+        const msgItem = document.createElement("div");
+        msgItem.className = `grpc-message ${msg.Direction === "sent" ? "message-sent" : "message-received"}`;
+
+        const msgHeader = document.createElement("div");
+        msgHeader.className = "grpc-message-header";
+        msgHeader.innerHTML = `<span class="message-index">#${index + 1}</span> <span class="message-direction">${msg.Direction.toUpperCase()}</span> <span class="message-time">${new Date(msg.Timestamp).toLocaleTimeString()}.${new Date(msg.Timestamp).getMilliseconds()}</span>`;
+
+        const msgContent = document.createElement("pre");
+        msgContent.className = "grpc-message-content";
+        msgContent.textContent = formatBody(msg.Data);
+
+        msgItem.appendChild(msgHeader);
+        msgItem.appendChild(msgContent);
+        messagesElement.appendChild(msgItem);
+      });
+    } else {
+      messagesContainer.style.display = "none";
+    }
+  }
+
+  // Helper function to format GRPC metadata
+  function formatGRPCMetadata(metadata) {
+    if (!metadata || Object.keys(metadata).length === 0) {
+      return "No metadata available";
+    }
+
+    let result = "";
+    for (const key in metadata) {
+      result += `${key}: ${metadata[key].join(", ")}\n`;
+    }
+    return result;
+  }
+
+  // Function to create the gRPC details container if needed
+  function createGRPCDetailsContainer() {
+    // Create the container element
+    const container = document.createElement("div");
+    container.id = "grpcRequestDetails";
+    container.className = "card";
+    container.style.display = "none";
+
+    // Add the content
+    container.innerHTML = `
+        <div class="card-header">
+            <h2>gRPC Request Details</h2>
+        </div>
+        <div id="grpcDetailsContent">
+            <div class="detail-row">
+                <strong>ID:</strong> <span id="grpc-detail-id"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Time:</strong> <span id="grpc-detail-time"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Service:</strong> <span id="grpc-detail-service"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Method:</strong> <span id="grpc-detail-method"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Type:</strong> <span id="grpc-detail-type"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Peer:</strong> <span id="grpc-detail-peer"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Status:</strong> <span id="grpc-detail-status"></span>
+            </div>
+            <div class="detail-row">
+                <strong>Duration:</strong> <span id="grpc-detail-duration"></span>
+            </div>
+            
+            <div id="grpc-error-container" style="display: none">
+                <h3>Error</h3>
+                <pre id="grpc-detail-error" class="error-text"></pre>
+            </div>
+
+            <h3>Request Metadata</h3>
+            <pre id="grpc-detail-request-md"></pre>
+
+            <h3>Response Metadata</h3>
+            <pre id="grpc-detail-response-md"></pre>
+
+            <div id="grpc-request-data-container">
+                <h3>Request Data</h3>
+                <pre id="grpc-detail-request-data"></pre>
+            </div>
+
+            <div id="grpc-response-data-container">
+                <h3>Response Data</h3>
+                <pre id="grpc-detail-response-data"></pre>
+            </div>
+            
+            <div id="grpc-messages-container">
+                <h3>Stream Messages</h3>
+                <div id="grpc-messages-list" class="grpc-messages"></div>
+            </div>
+        </div>
+        <button id="close-grpc-details" class="btn">Close Details</button>
+    `;
+
+    // Add the container to the requests section
+    const requestsSection = document.getElementById("requests-section");
+    requestsSection.appendChild(container);
+
+    // Add event listener for close button
+    document.getElementById("close-grpc-details").addEventListener("click", () => {
+      document.getElementById("grpcRequestDetails").style.display = "none";
+      selectedRequestId = null;
+
+      // Return to dashboard section
+      document.querySelector('[data-target="dashboard-section"]').click();
+    });
+  }
+
   // Update statistics
   function updateStats(requests) {
     if (!requests || requests.length === 0) {
@@ -316,6 +596,9 @@
       document.getElementById("stat-redirect").textContent = "0";
       document.getElementById("stat-client-error").textContent = "0";
       document.getElementById("stat-server-error").textContent = "0";
+      document.getElementById("stat-grpc-total").textContent = "0";
+      document.getElementById("stat-grpc-success").textContent = "0";
+      document.getElementById("stat-grpc-error").textContent = "0";
       document.getElementById("stat-avg-time").textContent = "0 ms";
 
       // Update sidebar stats
@@ -323,18 +606,41 @@
       return;
     }
 
-    let success = 0;
-    let redirect = 0;
-    let clientError = 0;
-    let serverError = 0;
+    // HTTP stats
+    let httpSuccess = 0;
+    let httpRedirect = 0;
+    let httpClientError = 0;
+    let httpServerError = 0;
+    let httpTotal = 0;
+
+    // gRPC stats
+    let grpcSuccess = 0;
+    let grpcError = 0;
+    let grpcTotal = 0;
+
+    // Shared stats
     let totalDuration = 0;
     let validDurationCount = 0;
 
     requests.forEach((req) => {
-      if (req.StatusCode >= 200 && req.StatusCode < 300) success++;
-      else if (req.StatusCode >= 300 && req.StatusCode < 400) redirect++;
-      else if (req.StatusCode >= 400 && req.StatusCode < 500) clientError++;
-      else if (req.StatusCode >= 500) serverError++;
+      if (req.Type === "grpc") {
+        // gRPC request
+        grpcTotal++;
+
+        if (req.GRPCStatusCode === 0) {
+          grpcSuccess++;
+        } else {
+          grpcError++;
+        }
+      } else {
+        // HTTP request
+        httpTotal++;
+
+        if (req.StatusCode >= 200 && req.StatusCode < 300) httpSuccess++;
+        else if (req.StatusCode >= 300 && req.StatusCode < 400) httpRedirect++;
+        else if (req.StatusCode >= 400 && req.StatusCode < 500) httpClientError++;
+        else if (req.StatusCode >= 500) httpServerError++;
+      }
 
       if (req.Duration !== undefined && req.Duration !== null) {
         totalDuration += req.Duration;
@@ -347,18 +653,312 @@
         ? Math.round(totalDuration / validDurationCount)
         : 0;
 
-    const successRate =
-      requests.length > 0 ? Math.round((success / requests.length) * 100) : 0;
+    // Calculate combined success rate (HTTP + gRPC)
+    const successCount = httpSuccess + grpcSuccess;
+    const totalCount = requests.length;
+    const successRate = totalCount > 0 ? Math.round((successCount / totalCount) * 100) : 0;
 
-    document.getElementById("stat-total").textContent = requests.length;
-    document.getElementById("stat-success").textContent = success;
-    document.getElementById("stat-redirect").textContent = redirect;
-    document.getElementById("stat-client-error").textContent = clientError;
-    document.getElementById("stat-server-error").textContent = serverError;
+    // Update HTTP stats
+    document.getElementById("stat-total").textContent = httpTotal;
+    document.getElementById("stat-success").textContent = httpSuccess;
+    document.getElementById("stat-redirect").textContent = httpRedirect;
+    document.getElementById("stat-client-error").textContent = httpClientError;
+    document.getElementById("stat-server-error").textContent = httpServerError;
+
+    // Update gRPC stats
+    document.getElementById("stat-grpc-total").textContent = grpcTotal;
+    document.getElementById("stat-grpc-success").textContent = grpcSuccess;
+    document.getElementById("stat-grpc-error").textContent = grpcError;
+
+    // Update shared stats
     document.getElementById("stat-avg-time").textContent = avgDuration + " ms";
 
     // Update sidebar stats
-    updateSidebarStats(requests.length, successRate, avgDuration);
+    updateSidebarStats(totalCount, successRate, avgDuration);
+  }
+
+  function addGRPCStyles() {
+    const styleElement = document.createElement('style');
+    styleElement.textContent = `
+        /* gRPC row styling */
+        tr.grpc-request {
+            background-color: rgba(76, 175, 80, 0.05);
+        }
+        
+        tr.grpc-request:hover {
+            background-color: rgba(76, 175, 80, 0.1);
+        }
+        
+        /* Type indicators */
+        .type-grpc {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        
+        .type-http {
+            color: #2196F3;
+            font-weight: bold;
+        }
+        
+        /* Method types */
+        .method-grpc {
+            color: #9C27B0;
+            font-style: italic;
+        }
+        
+        /* gRPC stream messages */
+        .grpc-messages {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        .grpc-message {
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+        }
+        
+        .grpc-message:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        
+        .grpc-message-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+            padding: 5px 10px;
+            background-color: rgba(52, 152, 219, 0.05);
+            border-radius: 4px;
+            margin-bottom: 5px;
+        }
+        
+        .message-sent .grpc-message-header {
+            background-color: rgba(52, 152, 219, 0.1);
+        }
+        
+        .message-received .grpc-message-header {
+            background-color: rgba(46, 204, 113, 0.1);
+        }
+        
+        .message-direction {
+            color: var(--primary-color);
+        }
+        
+        .message-sent .message-direction {
+            color: var(--primary-color);
+        }
+        
+        .message-received .message-direction {
+            color: var(--secondary-color);
+        }
+        
+        .grpc-message-content {
+            margin: 0;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        /* Error text */
+        .error-text {
+            color: var(--danger-color);
+            background-color: rgba(231, 76, 60, 0.05);
+            border-left: 3px solid var(--danger-color);
+            padding-left: 10px;
+        }
+    `;
+    document.head.appendChild(styleElement);
+  }
+
+  function initializeGRPCSupport() {
+    addGRPCStyles();
+
+    // Add type filter to the filters section
+    const methodFilterGroup = document.querySelector(".filter-group:first-child");
+    if (methodFilterGroup) {
+      const typeFilterGroup = document.createElement("div");
+      typeFilterGroup.className = "filter-group";
+      typeFilterGroup.innerHTML = `
+            <label for="type-filter">Request Type</label>
+            <select id="type-filter" class="filter-select">
+                <option value="">All Types</option>
+                <option value="http">HTTP</option>
+                <option value="grpc">gRPC</option>
+            </select>
+        `;
+
+      methodFilterGroup.parentNode.insertBefore(typeFilterGroup, methodFilterGroup);
+    }
+
+    // Update method filter to include gRPC method types
+    const methodFilter = document.getElementById("method-filter");
+    if (methodFilter) {
+      // Save current value
+      const currentValue = methodFilter.value;
+
+      // Clear options
+      methodFilter.innerHTML = "";
+
+      // Add HTTP methods
+      const httpOptgroup = document.createElement("optgroup");
+      httpOptgroup.label = "HTTP Methods";
+
+      const httpOptions = [
+        { value: "", label: "All Methods" },
+        { value: "GET", label: "GET" },
+        { value: "POST", label: "POST" },
+        { value: "PUT", label: "PUT" },
+        { value: "DELETE", label: "DELETE" },
+        { value: "PATCH", label: "PATCH" }
+      ];
+
+      httpOptions.forEach(opt => {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        if (opt.value === currentValue) {
+          option.selected = true;
+        }
+        httpOptgroup.appendChild(option);
+      });
+
+      methodFilter.appendChild(httpOptgroup);
+
+      // Add gRPC method types
+      const grpcOptgroup = document.createElement("optgroup");
+      grpcOptgroup.label = "gRPC Method Types";
+
+      const grpcOptions = [
+        { value: "unary", label: "Unary" },
+        { value: "client_stream", label: "Client Streaming" },
+        { value: "server_stream", label: "Server Streaming" },
+        { value: "bidi_stream", label: "Bidirectional Streaming" }
+      ];
+
+      grpcOptions.forEach(opt => {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        grpcOptgroup.appendChild(option);
+      });
+
+      methodFilter.appendChild(grpcOptgroup);
+    }
+
+    // Update status filter to include gRPC statuses
+    const statusFilter = document.getElementById("status-filter");
+    if (statusFilter) {
+      // Save current value
+      const currentValue = statusFilter.value;
+
+      // Clear options
+      statusFilter.innerHTML = "";
+
+      // Add HTTP status codes
+      const httpOptgroup = document.createElement("optgroup");
+      httpOptgroup.label = "HTTP Status Codes";
+
+      const httpOptions = [
+        { value: "", label: "All Status Codes" },
+        { value: "2xx", label: "2xx Success" },
+        { value: "3xx", label: "3xx Redirect" },
+        { value: "4xx", label: "4xx Client Error" },
+        { value: "5xx", label: "5xx Server Error" }
+      ];
+
+      httpOptions.forEach(opt => {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        if (opt.value === currentValue) {
+          option.selected = true;
+        }
+        httpOptgroup.appendChild(option);
+      });
+
+      statusFilter.appendChild(httpOptgroup);
+
+      // Add gRPC status codes
+      const grpcOptgroup = document.createElement("optgroup");
+      grpcOptgroup.label = "gRPC Status Codes";
+
+      const grpcOptions = [
+        { value: "success", label: "OK (0)" },
+        { value: "error", label: "Any Error" },
+        { value: "code-1", label: "Cancelled (1)" },
+        { value: "code-2", label: "Unknown (2)" },
+        { value: "code-3", label: "Invalid Argument (3)" },
+        { value: "code-4", label: "Deadline Exceeded (4)" },
+        { value: "code-5", label: "Not Found (5)" },
+        { value: "code-6", label: "Already Exists (6)" },
+        { value: "code-7", label: "Permission Denied (7)" },
+        { value: "code-13", label: "Internal (13)" },
+        { value: "code-14", label: "Unavailable (14)" }
+      ];
+
+      grpcOptions.forEach(opt => {
+        const option = document.createElement("option");
+        option.value = opt.value;
+        option.textContent = opt.label;
+        grpcOptgroup.appendChild(option);
+      });
+
+      statusFilter.appendChild(grpcOptgroup);
+    }
+
+    // Update table headers to add Type column
+    const requestsTable = document.getElementById("requests");
+    if (requestsTable) {
+      const headerRow = requestsTable.querySelector("thead tr");
+      if (headerRow) {
+        // Look for the Time header
+        const timeHeader = headerRow.querySelector("th:first-child");
+        if (timeHeader) {
+          // Insert Type header after Time
+          const typeHeader = document.createElement("th");
+          typeHeader.textContent = "Type";
+          timeHeader.insertAdjacentElement("afterend", typeHeader);
+        }
+      }
+    }
+
+    // Add gRPC stats to stats section
+    const statsGrid = document.querySelector(".stats-grid");
+    if (statsGrid) {
+      // Create gRPC stat boxes
+      const grpcTotalBox = document.createElement("div");
+      grpcTotalBox.className = "stat-box";
+      grpcTotalBox.innerHTML = `
+            <div class="stat-value" id="stat-grpc-total">0</div>
+            <div class="stat-label">gRPC Total</div>
+        `;
+
+      const grpcSuccessBox = document.createElement("div");
+      grpcSuccessBox.className = "stat-box";
+      grpcSuccessBox.innerHTML = `
+            <div class="stat-value" id="stat-grpc-success">0</div>
+            <div class="stat-label">gRPC Success</div>
+        `;
+
+      const grpcErrorBox = document.createElement("div");
+      grpcErrorBox.className = "stat-box";
+      grpcErrorBox.innerHTML = `
+            <div class="stat-value" id="stat-grpc-error">0</div>
+            <div class="stat-label">gRPC Errors</div>
+        `;
+
+      // Append to stats grid
+      statsGrid.appendChild(grpcTotalBox);
+      statsGrid.appendChild(grpcSuccessBox);
+      statsGrid.appendChild(grpcErrorBox);
+    }
+
+    // Create the gRPC details container
+    createGRPCDetailsContainer();
   }
 
   // Show request details
@@ -492,16 +1092,14 @@
 
       const routePattern = document.createElement("div");
       routePattern.className = "trace-detail-item";
-      routePattern.innerHTML = `<strong>Pattern:</strong> ${
-        req.RouteTrace.pattern || "Unknown"
-      }`;
+      routePattern.innerHTML = `<strong>Pattern:</strong> ${req.RouteTrace.pattern || "Unknown"
+        }`;
       routeDetails.appendChild(routePattern);
 
       const routePath = document.createElement("div");
       routePath.className = "trace-detail-item";
-      routePath.innerHTML = `<strong>Path:</strong> ${
-        req.RouteTrace.path || "Unknown"
-      }`;
+      routePath.innerHTML = `<strong>Path:</strong> ${req.RouteTrace.path || "Unknown"
+        }`;
       routeDetails.appendChild(routePath);
 
       if (req.RouteTrace.params) {
@@ -1363,11 +1961,11 @@
 
     row.innerHTML = `
         <td><input type="text" class="header-name" value="${escapeHtml(
-          name
-        )}" placeholder="Header name"></td>
+      name
+    )}" placeholder="Header name"></td>
         <td><input type="text" class="header-value" value="${escapeHtml(
-          value
-        )}" placeholder="Header value"></td>
+      value
+    )}" placeholder="Header value"></td>
         <td><span class="replay-remove-header">&times;</span></td>
     `;
 
@@ -1492,9 +2090,8 @@
 
     let output = "";
     for (const [key, values] of Object.entries(headers)) {
-      output += `${key}: ${
-        Array.isArray(values) ? values.join(", ") : values
-      }\n`;
+      output += `${key}: ${Array.isArray(values) ? values.join(", ") : values
+        }\n`;
     }
 
     return output;
@@ -1557,5 +2154,7 @@
       document.getElementById("replayModal").classList.remove("active");
     }
   });
+
+  document.addEventListener("DOMContentLoaded", initializeGRPCSupport);
 </script>
 {{end}}

@@ -27,23 +27,22 @@
 
     <div class="filter-group">
       <label for="path-filter">Path Contains</label>
-      <input
-        type="text"
-        id="path-filter"
-        class="filter-input"
-        placeholder="Filter by path..."
-      />
+      <input type="text" id="path-filter" class="filter-input" placeholder="Filter by path..." />
     </div>
 
     <div class="filter-group">
       <label for="duration-filter">Min Duration (ms)</label>
-      <input
-        type="number"
-        id="duration-filter"
-        class="filter-input"
-        placeholder="Min duration..."
-      />
+      <input type="number" id="duration-filter" class="filter-input" placeholder="Min duration..." />
     </div>
+  </div>
+
+  <div class="filter-group">
+    <label for="type-filter">Request Type</label>
+    <select id="type-filter" class="filter-select">
+      <option value="">All Types</option>
+      <option value="http">HTTP</option>
+      <option value="grpc">gRPC</option>
+    </select>
   </div>
 
   <div class="filter-actions">
