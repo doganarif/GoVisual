@@ -3,7 +3,7 @@ package transport
 
 import (
 	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 // StoreTransport is a transport that uses a shared store for communication.

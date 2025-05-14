@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 // PathMatcher defines an interface for checking if a path should be ignored

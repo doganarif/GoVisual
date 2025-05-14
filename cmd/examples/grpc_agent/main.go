@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual"
-	"github.com/doganarif/govisual/internal/store"
 	"github.com/doganarif/govisual/pkg/agent"
 	"github.com/doganarif/govisual/pkg/server"
+	"github.com/doganarif/govisual/pkg/store"
 	"github.com/doganarif/govisual/pkg/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -43,19 +43,10 @@ func main() {
 
 func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	sharedStore := store.NewInMemoryStore(100)
 
-	// Create a shared store for visualization
-	sharedStore, err := govisual.NewStore(
-		govisual.WithMaxRequests(100),
-		govisual.WithMemoryStorage(),
-	)
-	if err != nil {
-		return fmt.Errorf("creating shared store: %w", err)
-	}
-
-	// Create transport based on agent mode
 	var transportObj transport.Transport
-
+	var err error
 	switch *agentMode {
 	case "store":
 		log.Info("Using shared store transport")
@@ -166,21 +157,13 @@ func run() error {
 
 	// Add API endpoints for agent communication
 	if *agentMode != "store" {
-		// Type assert to get the internal store implementation
-		internalStore, ok := sharedStore.(store.Store)
-		if !ok {
-			internalStore = store.NewInMemoryStore(100)
-			log.Warn("failed to convert shared store; created new in-memory store for agent API")
-		}
-
 		// Create and register agent API handler
-		agentAPI := server.NewAgentAPI(internalStore)
+		agentAPI := server.NewAgentAPI(sharedStore)
 		agentAPI.RegisterHandlers(mux)
 	}
 
 	// Wrap with GoVisual for dashboard
-	handler := govisual.Wrap(
-		mux,
+	handler := govisual.Wrap(mux,
 		govisual.WithMaxRequests(100),
 		govisual.WithRequestBodyLogging(true),
 		govisual.WithResponseBodyLogging(true),
@@ -190,14 +173,7 @@ func run() error {
 	// Start NATS handler if using NATS transport
 	var natsHandler *server.NATSHandler
 	if *agentMode == "nats" {
-		// Type assert to get the internal store implementation
-		internalStore, ok := sharedStore.(store.Store)
-		if !ok {
-			internalStore = store.NewInMemoryStore(100)
-			log.Warn("failed to convert shared store; created new in-memory store for NATS handler")
-		}
-
-		natsHandler, err = server.NewNATSHandler(internalStore, *natsURL)
+		natsHandler, err = server.NewNATSHandler(sharedStore, *natsURL)
 		if err != nil {
 			return fmt.Errorf("creating NATS handler: %w", err)
 		}

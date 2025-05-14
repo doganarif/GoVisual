@@ -11,8 +11,8 @@ import (
 
 	"github.com/doganarif/govisual/internal/dashboard"
 	"github.com/doganarif/govisual/internal/middleware"
-	"github.com/doganarif/govisual/internal/store"
 	"github.com/doganarif/govisual/internal/telemetry"
+	"github.com/doganarif/govisual/pkg/store"
 )
 
 // Wrap wraps an http.Handler with request visualization middleware

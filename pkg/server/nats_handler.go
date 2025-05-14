@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/pkg/store"
 	"github.com/nats-io/nats.go"
 )
 
