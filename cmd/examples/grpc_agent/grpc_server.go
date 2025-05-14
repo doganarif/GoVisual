@@ -4,7 +4,6 @@ import (
 	"context"
 	pb_greeter "example/gen/greeter/v1"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -15,7 +14,6 @@ type Server struct {
 
 // SayHello implements the SayHello RPC method.
 func (s *Server) SayHello(ctx context.Context, req *pb_greeter.HelloRequest) (*pb_greeter.HelloReply, error) {
-	log.Printf("Received: %v", req.GetName())
 	return &pb_greeter.HelloReply{
 		Message:   "Hello " + req.GetName(),
 		Timestamp: time.Now().Unix(),
@@ -24,8 +22,6 @@ func (s *Server) SayHello(ctx context.Context, req *pb_greeter.HelloRequest) (*p
 
 // SayHelloStream implements the server streaming RPC method.
 func (s *Server) SayHelloStream(req *pb_greeter.HelloRequest, stream pb_greeter.GreeterService_SayHelloStreamServer) error {
-	log.Printf("Received stream request: %v", req.GetName())
-
 	for i := 0; i < 5; i++ {
 		if err := stream.Send(&pb_greeter.HelloReply{
 			Message:   fmt.Sprintf("Hello %s! (response #%d)", req.GetName(), i+1),

@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/doganarif/govisual/internal"
 	"github.com/doganarif/govisual/internal/model"
 	"github.com/doganarif/govisual/pkg/store"
 	"github.com/nats-io/nats.go"
@@ -35,27 +36,25 @@ func NewNATSHandler(store store.Store, serverURL string, opts ...nats.Option) (*
 // Start begins listening for agent messages on NATS.
 func (h *NATSHandler) Start() error {
 	// Subscribe to single log messages
-	singleSub, err := h.conn.Subscribe("govisual.logs.single", h.handleSingleLog)
+	singleSub, err := h.conn.Subscribe(internal.NatsSubjectSingleLogMessages, h.handleSingleLog)
 	if err != nil {
 		return err
 	}
 	h.subs = append(h.subs, singleSub)
 
 	// Subscribe to batch log messages
-	batchSub, err := h.conn.Subscribe("govisual.logs.batch", h.handleBatchLogs)
+	batchSub, err := h.conn.Subscribe(internal.NatsSubjectBatchLogMessages, h.handleBatchLogs)
 	if err != nil {
 		return err
 	}
 	h.subs = append(h.subs, batchSub)
 
 	// Subscribe to agent status messages
-	statusSub, err := h.conn.Subscribe("govisual.agent.status", h.handleAgentStatus)
+	statusSub, err := h.conn.Subscribe(internal.NatsSubjectAgentStatusMessages, h.handleAgentStatus)
 	if err != nil {
 		return err
 	}
 	h.subs = append(h.subs, statusSub)
-
-	log.Println("NATS handler started and listening for agent messages")
 	return nil
 }
 
@@ -72,7 +71,6 @@ func (h *NATSHandler) Stop() error {
 
 	// Close the connection
 	h.conn.Close()
-	log.Println("NATS handler stopped")
 	return nil
 }
 

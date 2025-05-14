@@ -1,22 +1,26 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/doganarif/govisual/internal"
 	"github.com/doganarif/govisual/internal/model"
 	"github.com/nats-io/nats.go"
 )
 
 // NATSTransport is a transport that uses NATS for communication.
 type NATSTransport struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	config      *Config
 	conn        *nats.Conn
 	buffer      []*model.RequestLog
 	bufferMutex sync.Mutex
-	shutdown    chan struct{}
 	wg          sync.WaitGroup
 }
 
@@ -53,14 +57,19 @@ func NewNATSTransport(serverURL string, opts ...Option) (*NATSTransport, error) 
 
 	conn, err := nats.Connect(serverURL, natsOpts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
+		return nil, fmt.Errorf("connecting to NATS: %w", err)
+	}
+	if !conn.IsConnected() {
+		return nil, fmt.Errorf("NATS did not connect")
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	t := &NATSTransport{
-		config:   config,
-		conn:     conn,
-		buffer:   make([]*model.RequestLog, 0, config.BufferSize),
-		shutdown: make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
+		config: config,
+		conn:   conn,
+		buffer: make([]*model.RequestLog, 0, config.BufferSize),
 	}
 
 	// Start the background processor for batching
@@ -108,12 +117,12 @@ func (t *NATSTransport) SendBatch(logs []*model.RequestLog) error {
 	}
 
 	// Send to NATS
-	return t.conn.Publish("govisual.logs.batch", data)
+	return t.conn.Publish(internal.NatsSubjectBatchLogMessages, data)
 }
 
 // Close closes the NATS transport.
 func (t *NATSTransport) Close() error {
-	close(t.shutdown)
+	t.cancel()
 	t.wg.Wait()
 
 	// Send any remaining logs
@@ -146,7 +155,7 @@ func (t *NATSTransport) startBackgroundProcessor() {
 			select {
 			case <-ticker.C:
 				t.processBatch()
-			case <-t.shutdown:
+			case <-t.ctx.Done():
 				return
 			}
 		}
@@ -179,5 +188,5 @@ func (t *NATSTransport) sendSingle(log *model.RequestLog) error {
 	}
 
 	// Send to NATS
-	return t.conn.Publish("govisual.logs.single", data)
+	return t.conn.Publish(internal.NatsSubjectSingleLogMessages, data)
 }
