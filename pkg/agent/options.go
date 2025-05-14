@@ -4,100 +4,76 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/pkg/transport"
 )
 
-// WithGRPCBatchingEnabled enables or disables request batching for gRPC agent.
-// This is a type-safe wrapper around WithBatchingEnabled for gRPC agents.
-func WithGRPCBatchingEnabled(enabled bool) GRPCOption {
+// Option is a function that configures an agent.
+type Option func(*AgentConfig)
+
+// Apply applies the option to an AgentConfig
+func (o Option) Apply(config *AgentConfig) {
+	o(config)
+}
+
+// ForGRPC converts a base option to a GRPC option
+func (o Option) ForGRPC() GRPCOption {
 	return func(c *GRPCAgentConfig) {
-		c.AgentConfig.BatchingEnabled = enabled
+		o(&c.AgentConfig)
 	}
 }
 
-// WithGRPCBatchSize sets the maximum number of requests in a batch for gRPC agent.
-// This is a type-safe wrapper around WithBatchSize for gRPC agents.
-func WithGRPCBatchSize(size int) GRPCOption {
-	return func(c *GRPCAgentConfig) {
-		c.AgentConfig.BatchSize = size
-	}
-}
-
-// WithGRPCBatchInterval sets the maximum time to wait before sending a batch for gRPC agent.
-// This is a type-safe wrapper around WithBatchInterval for gRPC agents.
-func WithGRPCBatchInterval(interval time.Duration) GRPCOption {
-	return func(c *GRPCAgentConfig) {
-		c.AgentConfig.BatchInterval = interval
-	}
-}
-
-// WithGRPCFilter sets a filter function for the gRPC agent.
-// This is a type-safe wrapper around WithFilter for gRPC agents.
-func WithGRPCFilter(filter func(*model.RequestLog) bool) GRPCOption {
-	return func(c *GRPCAgentConfig) {
-		c.AgentConfig.Filter = filter
-	}
-}
-
-// WithGRPCProcessor sets a processor function for the gRPC agent.
-// This is a type-safe wrapper around WithProcessor for gRPC agents.
-func WithGRPCProcessor(processor func(*model.RequestLog) *model.RequestLog) GRPCOption {
-	return func(c *GRPCAgentConfig) {
-		c.AgentConfig.Processor = processor
-	}
-}
-
-// WithGRPCMaxBufferSize sets the maximum buffer size for the gRPC agent.
-// This is a type-safe wrapper around WithMaxBufferSize for gRPC agents.
-func WithGRPCMaxBufferSize(size int) GRPCOption {
-	return func(c *GRPCAgentConfig) {
-		c.AgentConfig.MaxBufferSize = size
-	}
-}
-
-// WithHTTPBatchingEnabled enables or disables request batching for HTTP agent.
-// This is a type-safe wrapper around WithBatchingEnabled for HTTP agents.
-func WithHTTPBatchingEnabled(enabled bool) HTTPOption {
+// ForHTTP converts a base option to an HTTP option
+func (o Option) ForHTTP() HTTPOption {
 	return func(c *HTTPAgentConfig) {
-		c.AgentConfig.BatchingEnabled = enabled
+		o(&c.AgentConfig)
 	}
 }
 
-// WithHTTPBatchSize sets the maximum number of requests in a batch for HTTP agent.
-// This is a type-safe wrapper around WithBatchSize for HTTP agents.
-func WithHTTPBatchSize(size int) HTTPOption {
-	return func(c *HTTPAgentConfig) {
-		c.AgentConfig.BatchSize = size
+// WithTransport sets the transport mechanism for the agent.
+func WithTransport(transport transport.Transport) Option {
+	return func(c *AgentConfig) {
+		c.Transport = transport
 	}
 }
 
-// WithHTTPBatchInterval sets the maximum time to wait before sending a batch for HTTP agent.
-// This is a type-safe wrapper around WithBatchInterval for HTTP agents.
-func WithHTTPBatchInterval(interval time.Duration) HTTPOption {
-	return func(c *HTTPAgentConfig) {
-		c.AgentConfig.BatchInterval = interval
+// WithMaxBufferSize sets the maximum number of requests to buffer.
+func WithMaxBufferSize(size int) Option {
+	return func(c *AgentConfig) {
+		c.MaxBufferSize = size
 	}
 }
 
-// WithHTTPFilter sets a filter function for the HTTP agent.
-// This is a type-safe wrapper around WithFilter for HTTP agents.
-func WithHTTPFilter(filter func(*model.RequestLog) bool) HTTPOption {
-	return func(c *HTTPAgentConfig) {
-		c.AgentConfig.Filter = filter
+// WithBatchingEnabled enables or disables request batching.
+func WithBatchingEnabled(enabled bool) Option {
+	return func(c *AgentConfig) {
+		c.BatchingEnabled = enabled
 	}
 }
 
-// WithHTTPProcessor sets a processor function for the HTTP agent.
-// This is a type-safe wrapper around WithProcessor for HTTP agents.
-func WithHTTPProcessor(processor func(*model.RequestLog) *model.RequestLog) HTTPOption {
-	return func(c *HTTPAgentConfig) {
-		c.AgentConfig.Processor = processor
+// WithBatchSize sets the maximum number of requests in a batch.
+func WithBatchSize(size int) Option {
+	return func(c *AgentConfig) {
+		c.BatchSize = size
 	}
 }
 
-// WithHTTPMaxBufferSize sets the maximum buffer size for the HTTP agent.
-// This is a type-safe wrapper around WithMaxBufferSize for HTTP agents.
-func WithHTTPMaxBufferSize(size int) HTTPOption {
-	return func(c *HTTPAgentConfig) {
-		c.AgentConfig.MaxBufferSize = size
+// WithBatchInterval sets the maximum time to wait before sending a batch.
+func WithBatchInterval(interval time.Duration) Option {
+	return func(c *AgentConfig) {
+		c.BatchInterval = interval
+	}
+}
+
+// WithFilter sets a filter function for the agent.
+func WithFilter(filter func(*model.RequestLog) bool) Option {
+	return func(c *AgentConfig) {
+		c.Filter = filter
+	}
+}
+
+// WithProcessor sets a processor function for the agent.
+func WithProcessor(processor func(*model.RequestLog) *model.RequestLog) Option {
+	return func(c *AgentConfig) {
+		c.Processor = processor
 	}
 }
