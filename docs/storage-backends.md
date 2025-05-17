@@ -252,6 +252,35 @@ handler := govisual.Wrap(
 - Higher hosting costs for production deployments
 - More complex backup procedures
 
+**Storage Structure:**
+
+The MongoDB adapter stores request logs in the following structure:
+
+```json
+{
+    "_id": "unique_request_id",
+    "timestamp": ISODate("2024-03-21T10:00:00Z"),
+    "method": "GET",
+    "path": "/api/users",
+    "query": "?page=1",
+    "request_headers": {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer ..."
+    },
+    "response_headers": {
+        "Content-Type": "application/json"
+    },
+    "status_code": 200,
+    "duration": 150,
+    "request_body": "...",
+    "response_body": "...",
+    "error": null,
+    "middleware_trace": [...],
+    "route_trace": [...],
+    "created_at": ISODate("2024-03-21T10:00:00Z")
+}
+```
+
 **Connection String Format:**
 
 Standard MongoDB connection string format:
