@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // StorageType represents the type of storage backend to use
@@ -23,6 +24,9 @@ const (
 
 	// StorageTypeSQLiteWithDB represents SQLite storage with existing connection
 	StorageTypeSQLiteWithDB StorageType = "sqlite_with_db"
+
+	// StorageTypeMongoDB represents MongoDB storage
+	StorageTypeMongoDB StorageType = "mongodb"
 )
 
 // StorageConfig represents configuration options for storage backends
@@ -69,6 +73,14 @@ func NewStore(config *StorageConfig) (Store, error) {
 		}
 		return NewSQLiteStoreWithDB(config.ExistingDB, config.TableName, config.Capacity)
 
+	case StorageTypeMongoDB:
+		mongoMetaData := strings.Split(config.TableName, ".")
+		if len(mongoMetaData) < 2 {
+			return nil, fmt.Errorf("failed to get mongodb connection metadata")
+		}
+		database := mongoMetaData[0]
+		collection := mongoMetaData[1]
+		return NewMongoDBStore(config.ConnectionString, database, collection, config.Capacity)
 	default:
 		return nil, fmt.Errorf("unknown storage type: %s", config.Type)
 	}

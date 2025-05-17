@@ -10,7 +10,7 @@ services:
     environment:
       - PORT=8080
       # Comment/uncomment the following environment variables to switch storage backends
-      
+
       # Use in-memory storage (default, no env vars needed)
       # - GOVISUAL_STORAGE_TYPE=sqlite
       #
@@ -18,16 +18,22 @@ services:
       # - GOVISUAL_STORAGE_TYPE=sqlite
       # - GOVISUAL_SQLITE_DBPATH=/data/govisual.db
       # - GOVISUAL_SQLITE_TABLE=govisual_requests
-      
+
       # Use PostgreSQL storage
       # - GOVISUAL_STORAGE_TYPE=postgres
       # - GOVISUAL_PG_CONN=postgres://postgres:postgres@postgres:5432/govisual?sslmode=disable
       # - GOVISUAL_PG_TABLE=govisual_requests
-      
+
       # Use Redis storage
       - GOVISUAL_STORAGE_TYPE=redis
       - GOVISUAL_REDIS_CONN=redis://redis:6379/0
       - GOVISUAL_REDIS_TTL=86400
+
+      # Use MongoDB storage
+      # - GOVISUAL_STORAGE_TYPE=mongodb
+      # - GOVISUAL_MONGO_URI=mongodb://root:root@localhost:27017/
+      # - GOVISUAL_MONGO_DATABASE=logs
+      # - GOVISUAL_MONGO_COLLECTION=request_logs
     depends_on:
       - postgres
       - redis
@@ -66,9 +72,22 @@ services:
       timeout: 5s
       retries: 5
 
+   mongo:
+    image: "mongo"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=root
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - govisual-net
+
 volumes:
   postgres-data:
   redis-data:
+  mongo-data:
 
 networks:
   govisual-net:

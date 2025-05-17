@@ -218,6 +218,60 @@ func main() {
 - When you want to avoid driver registration conflicts
 - When you need more control over the database connection
 
+### MongoDB Storage
+
+For document-based storage with high scalability, you can use MongoDB. This requires the `go.mongodb.org/mongo-driver/v2/mongo` package.
+
+```go
+handler := govisual.Wrap(
+    mux,
+    govisual.WithMongoDBStorage(
+        "mongodb://user:password@localhost:27017",  // MongoDB connection string
+        "govisual",                                 // Database name
+        "requests"                                  // Collection name
+    ),
+)
+```
+
+**Pros:**
+
+- Schema flexibility for varying request/response structures
+- High performance for read/write operations
+- Horizontal scalability through sharding
+- Rich querying capabilities for request analysis
+- Native JSON support for HTTP request/response data
+- Efficient handling of large document sizes
+- Built-in replication and high availability
+
+**Cons:**
+
+- Higher memory usage compared to SQL databases
+- Requires separate MongoDB instance setup and maintenance
+- Eventually consistent by default (may affect real-time tracking)
+- Steeper learning curve for team operations
+- Higher hosting costs for production deployments
+- More complex backup procedures
+
+**Connection String Format:**
+
+Standard MongoDB connection string format:
+```
+mongodb://[username:password@]host[:port][/database][?options]
+```
+
+Example:
+```
+mongodb://admin:password@localhost:27017/govisual?authSource=admin
+```
+
+**When to use:**
+
+- For applications with varying request/response structures
+- When high scalability is a requirement
+- In microservices architectures where eventual consistency is acceptable
+- When native JSON storage and querying is important
+- For distributed systems requiring horizontal scaling
+
 ## Choosing a Storage Backend
 
 Here are some guidelines for choosing the appropriate storage backend:
