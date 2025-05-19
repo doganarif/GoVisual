@@ -298,7 +298,7 @@ mongodb://admin:password@localhost:27017/govisual?authSource=admin
 - For applications with varying request/response structures
 - When high scalability is a requirement
 - In microservices architectures where eventual consistency is acceptable
-- When native JSON storage and querying is important
+- When native JSON storage and querying are important
 - For distributed systems requiring horizontal scaling
 
 ## Choosing a Storage Backend
