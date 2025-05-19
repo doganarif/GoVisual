@@ -25,6 +25,10 @@ var (
 
 // addShutdownFunc adds a shutdown function to be called on signal
 func addShutdownFunc(fn func(context.Context) error) {
+	if fn == nil {
+		log.Println("Warning: Attempted to register nil shutdown function, ignoring")
+		return
+	}
 	shutdownMutex.Lock()
 	defer shutdownMutex.Unlock()
 	shutdownFuncs = append(shutdownFuncs, fn)
