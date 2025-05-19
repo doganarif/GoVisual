@@ -195,7 +195,7 @@ Configures GoVisual to use MongoDB storage.
 **Example:**
 
 ```go
-govisual.WithMongoDBStorate("mongodb://user:password@localhost:27017", "your_database", "your_collection")
+govisual.WithMongoDBStorage("mongodb://user:password@localhost:27017", "your_database", "your_collection")
 ```
 
 ### OpenTelemetry Options
