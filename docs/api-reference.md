@@ -181,7 +181,7 @@ govisual.WithRedisStorage("redis://localhost:6379/0", 86400)
 ### WithMongoDBStorage
 
 ```go
-func WithMongoDBStorate(uri, databaseName, collectionName string)
+func WithMongoDBStorage(uri, databaseName, collectionName string)
 ```
 
 Configures Govisual to use MongoDB storage.
