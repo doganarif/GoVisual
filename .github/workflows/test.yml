@@ -34,6 +34,16 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      mongodb:
+        image: mongo:6
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -50,4 +60,5 @@ jobs:
         env:
           PG_CONN: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
           REDIS_CONN: redis://localhost:6379/0
+          MONGO_URI: mongodb://localhost:27017
         run: go test -v ./...
