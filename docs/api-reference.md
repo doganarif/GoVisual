@@ -178,6 +178,26 @@ Configures GoVisual to use Redis storage.
 govisual.WithRedisStorage("redis://localhost:6379/0", 86400)
 ```
 
+### WithMongoDBStorage
+
+```go
+func WithMongoDBStorage(uri, databaseName, collectionName string)
+```
+
+Configures GoVisual to use MongoDB storage.
+
+**Parameters:**
+
+- `uri string`: MongoDB connection URI
+- `databaseName string`: Name of the database to use
+- `collectionName string`: Name of the collection to use
+
+**Example:**
+
+```go
+govisual.WithMongoDBStorage("mongodb://user:password@localhost:27017", "your_database", "your_collection")
+```
+
 ### OpenTelemetry Options
 
 #### WithOpenTelemetry

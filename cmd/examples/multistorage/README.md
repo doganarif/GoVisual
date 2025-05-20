@@ -58,6 +58,15 @@ environment:
   - GOVISUAL_SQLITE_TABLE=govisual_requests
 ```
 
+### Using MongoDB Storage
+
+```yaml
+GOVISUAL_STORAGE_TYPE=mongodb
+GOVISUAL_MONGO_URI=mongodb://root:root@localhost:27017/
+GOVISUAL_MONGO_DATABASE=logs
+GOVISUAL_MONGO_COLLECTION=request_logs
+```
+
 ## Accessing the Application
 
 Once the application is running, you can access it at:

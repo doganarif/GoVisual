@@ -100,7 +100,11 @@ func main() {
 		// Pass the existing connection to govisual
 		opts = append(opts, govisual.WithSQLiteStorageDB(db, tableName))
 		log.Printf("Using SQLite storage with existing connection and table: %s", tableName)
-
+	case "mongodb":
+		uri := os.Getenv("GOVISUAL_MONGO_URI")
+		database := os.Getenv("GOVISUAL_MONGO_DATABASE")
+		collection := os.Getenv("GOVISUAL_MONGO_COLLECTION")
+		opts = append(opts, govisual.WithMongoDBStorage(uri, database, collection))
 	default:
 		// Default to memory storage
 		opts = append(opts, govisual.WithMemoryStorage())

@@ -2,6 +2,7 @@ package govisual
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -150,6 +151,15 @@ func WithRedisStorage(connStr string, ttlSeconds int) Option {
 		c.StorageType = store.StorageTypeRedis
 		c.ConnectionString = connStr
 		c.RedisTTL = ttlSeconds
+	}
+}
+
+// WithMongoDBStorage configures the application to use MongoDB storage
+func WithMongoDBStorage(uri, databaseName, collectionName string) Option {
+	return func(c *Config) {
+		c.StorageType = store.StorageTypeMongoDB
+		c.ConnectionString = uri
+		c.TableName = fmt.Sprintf("%s.%s", databaseName, collectionName)
 	}
 }
 

@@ -29,11 +29,12 @@ handler := govisual.Wrap(
 
 ### Storage Options
 
-| Option                                    | Description                     | Default | Example                                                                                       |
-| ----------------------------------------- | ------------------------------- | ------- | --------------------------------------------------------------------------------------------- |
-| `WithMemoryStorage()`                     | Use in-memory storage (default) | N/A     | `govisual.WithMemoryStorage()`                                                                |
-| `WithPostgresStorage(connStr, tableName)` | Use PostgreSQL storage          | N/A     | `govisual.WithPostgresStorage("postgres://user:pass@localhost:5432/db", "govisual_requests")` |
-| `WithRedisStorage(connStr, ttl)`          | Use Redis storage               | N/A     | `govisual.WithRedisStorage("redis://localhost:6379/0", 86400)`                                |
+| Option                                                     | Description                     | Default | Example                                                                                                          |
+| ---------------------------------------------------------  | ------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `WithMemoryStorage()`                                      | Use in-memory storage (default) | N/A     | `govisual.WithMemoryStorage()`                                                                                   |
+| `WithPostgresStorage(connStr, tableName)`                  | Use PostgreSQL storage          | N/A     | `govisual.WithPostgresStorage("postgres://user:pass@localhost:5432/db", "govisual_requests")`                    |
+| `WithRedisStorage(connStr, ttl)`                           | Use Redis storage               | N/A     | `govisual.WithRedisStorage("redis://localhost:6379/0", 86400)`                                                   |
+| `WithMongoDBStorage(uri, databaseName, collectionName)`    | Use MongoDB storage             | N/A     | `govisual.WithMongoDBStorage("mongodb://user:password@localhost:27017/", "your_database", "your_collection")`    |
 
 ### OpenTelemetry Options
 
@@ -104,6 +105,7 @@ handler := govisual.Wrap(
     govisual.WithOpenTelemetry(true),
     govisual.WithServiceName("user-service"),
     govisual.WithServiceVersion("2.0.1"),
+    govisual.WithMongoDBStorage("mongodb://user:password@localhost:27017/", "your_database", "your_collection")
 )
 ```
 

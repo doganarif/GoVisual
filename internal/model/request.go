@@ -6,7 +6,7 @@ import (
 )
 
 type RequestLog struct {
-	ID              string                   `json:"ID"`
+	ID              string                   `json:"ID" bson:"_id"`
 	Timestamp       time.Time                `json:"Timestamp"`
 	Method          string                   `json:"Method"`
 	Path            string                   `json:"Path"`
