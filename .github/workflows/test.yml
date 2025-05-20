@@ -37,12 +37,12 @@ jobs:
       mongodb:
         image: mongo:6
         env:
-          MONGO_INITDB_ROOT_USERNAME: testuser
-          MONGO_INITDB_ROOT_PASSWORD: testpass
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: root
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })' -u testuser -p testpass --authenticationDatabase admin"
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })' -u root -p root --authenticationDatabase admin"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -63,5 +63,5 @@ jobs:
         env:
           PG_CONN: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
           REDIS_CONN: redis://localhost:6379/0
-          MONGO_URI: mongodb://testuser:testpass@localhost:27017/?authSource=admin
+          MONGO_URI: mongodb://root:root@localhost:27017
         run: go test -v ./...
