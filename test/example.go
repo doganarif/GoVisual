@@ -20,7 +20,7 @@ func main() {
 	})
 
 	// add delay simulation route
-	mux.HandleFunc("/dalay/{duration}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/delay/{duration}", func(w http.ResponseWriter, r *http.Request) {
 		durationStr := r.PathValue("duration")
 		duration, err := strconv.Atoi(durationStr)
 		if err != nil || duration < 0 {
