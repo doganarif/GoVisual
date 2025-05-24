@@ -3,12 +3,14 @@ package utils
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
+	"github.com/mattn/go-isatty"
 )
 
-const (
+var (
 	green   = "\033[32m"
 	white   = "\033[37m"
 	red     = "\033[31m"
@@ -63,7 +65,7 @@ func colorizeStatus(status int) string {
 	case status >= http.StatusOK && status < http.StatusMultipleChoices:
 		color = green
 	case status >= http.StatusMultipleChoices && status < http.StatusBadRequest:
-		color = white
+		color = blue
 	case status >= http.StatusBadRequest && status < http.StatusInternalServerError:
 		color = yellow
 	default:
@@ -106,4 +108,21 @@ func LogRequest(reqLog *model.RequestLog) {
 		colorizeDuration(time.Since(reqLog.Timestamp)),
 		reqLog.Path,
 	)
+}
+
+func init() {
+	// Initialize any necessary configurations or settings
+
+	if !isatty.IsTerminal(os.Stdout.Fd()) || !isatty.IsTerminal(os.Stderr.Fd()) {
+		green = ""
+		white = ""
+		red = ""
+		blue = ""
+		yellow = ""
+		gray = ""
+		black = ""
+		magenta = ""
+		cyan = ""
+		reset = ""
+	}
 }

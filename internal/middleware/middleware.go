@@ -40,7 +40,7 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 }
 
 // Wrap wraps an http.Handler with the request visualization middleware
-func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, logToConsole bool, pathMatcher PathMatcher) http.Handler {
+func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBody, logToConsole bool, pathMatcher PathMatcher) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
