@@ -42,6 +42,9 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 
 // Wrap wraps an http.Handler with the request visualization middleware
 func Wrap(handler http.Handler, store store.Store, config *options.Config, pathMatcher PathMatcher) http.Handler {
+
+	logger := utils.NewLogger()
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
@@ -119,7 +122,7 @@ func Wrap(handler http.Handler, store store.Store, config *options.Config, pathM
 
 		// Log to console if enabled
 		if config.LogRequestToConsole {
-			utils.LogRequest(reqLog)
+			logger.LogRequest(reqLog)
 		}
 
 		// Store the request log

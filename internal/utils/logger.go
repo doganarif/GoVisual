@@ -23,6 +23,30 @@ var (
 	reset   = "\033[0m"
 )
 
+type Logger struct{}
+
+func init() {
+	// Check if the output target is a terminal
+	// If not, disable color codes
+	if !isatty.IsTerminal(os.Stdout.Fd()) || !isatty.IsTerminal(os.Stderr.Fd()) {
+		green = ""
+		white = ""
+		red = ""
+		blue = ""
+		yellow = ""
+		gray = ""
+		black = ""
+		magenta = ""
+		cyan = ""
+		reset = ""
+	}
+}
+
+func NewLogger() *Logger {
+	// Create a new logger instance
+	return &Logger{}
+}
+
 func colorizeMethod(method string) string {
 	if method == "" {
 		return ""
@@ -93,7 +117,7 @@ func colorizeDuration(duration time.Duration) string {
 	return fmt.Sprintf("%s%13v%s", color, duration, reset)
 }
 
-func LogRequest(reqLog *model.RequestLog) {
+func (logger *Logger) LogRequest(reqLog *model.RequestLog) {
 	// This function logs the request details based on the configuration
 	if reqLog == nil {
 		fmt.Println("Warning: Attempted to log nil request log, ignoring")
@@ -108,21 +132,4 @@ func LogRequest(reqLog *model.RequestLog) {
 		colorizeDuration(time.Since(reqLog.Timestamp)),
 		reqLog.Path,
 	)
-}
-
-func init() {
-	// Initialize any necessary configurations or settings
-
-	if !isatty.IsTerminal(os.Stdout.Fd()) || !isatty.IsTerminal(os.Stderr.Fd()) {
-		green = ""
-		white = ""
-		red = ""
-		blue = ""
-		yellow = ""
-		gray = ""
-		black = ""
-		magenta = ""
-		cyan = ""
-		reset = ""
-	}
 }
