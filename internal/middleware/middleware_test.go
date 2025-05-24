@@ -61,7 +61,7 @@ func TestWrapMiddleware(t *testing.T) {
 		w.Write([]byte("hello world"))
 	})
 
-	wrapped := Wrap(handler, store, true, true, &mockPathMatcher{})
+	wrapped := Wrap(handler, store, true, true, false, &mockPathMatcher{})
 
 	req := httptest.NewRequest("POST", "/test?x=1", strings.NewReader("sample-body"))
 	req.Header.Set("X-Test", "test")
