@@ -101,7 +101,7 @@ func LogRequest(reqLog *model.RequestLog) {
 	}
 
 	fmt.Printf(
-		"[VIS] %v %s%s %s %#v\n",
+		"[VIZ] %v %s%s %s %#v\n",
 		reqLog.Timestamp.Format("2006-01-02 15:04:05"),
 		colorizeMethod(reqLog.Method),
 		colorizeStatus(reqLog.StatusCode),
