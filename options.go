@@ -18,6 +18,8 @@ type Config struct {
 
 	LogResponseBody bool
 
+	LogRequestToConsole bool
+
 	IgnorePaths []string
 
 	// OpenTelemetry configuration
@@ -73,6 +75,12 @@ func WithRequestBodyLogging(enabled bool) Option {
 func WithResponseBodyLogging(enabled bool) Option {
 	return func(c *Config) {
 		c.LogResponseBody = enabled
+	}
+}
+
+func WithConsoleLogging(enabled bool) Option {
+	return func(c *Config) {
+		c.LogRequestToConsole = enabled
 	}
 }
 
@@ -197,6 +205,7 @@ func defaultConfig() *Config {
 		DashboardPath:       "/__viz",
 		LogRequestBody:      false,
 		LogResponseBody:     false,
+		LogRequestToConsole: false,
 		IgnorePaths:         []string{},
 		EnableOpenTelemetry: false,
 		ServiceName:         "govisual",

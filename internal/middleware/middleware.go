@@ -9,6 +9,7 @@ import (
 
 	"github.com/doganarif/govisual/internal/model"
 	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/internal/utils"
 )
 
 // PathMatcher defines an interface for checking if a path should be ignored
@@ -39,7 +40,7 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 }
 
 // Wrap wraps an http.Handler with the request visualization middleware
-func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher) http.Handler {
+func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, logToConsole bool, pathMatcher PathMatcher) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
@@ -113,6 +114,11 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 		// Capture response body if enabled
 		if logResponseBody && resWriter.buffer != nil {
 			reqLog.ResponseBody = resWriter.buffer.String()
+		}
+
+		// Log to console if enabled
+		if logToConsole {
+			utils.LogRequest(reqLog)
 		}
 
 		// Store the request log
