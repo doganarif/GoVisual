@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/internal/options"
 )
 
 // mockStore implements store.Store for testing
@@ -61,7 +62,13 @@ func TestWrapMiddleware(t *testing.T) {
 		w.Write([]byte("hello world"))
 	})
 
-	wrapped := Wrap(handler, store, true, true, &mockPathMatcher{})
+	config := &options.Config{
+		LogRequestBody:      true,
+		LogResponseBody:     true,
+		LogRequestToConsole: false,
+	}
+
+	wrapped := Wrap(handler, store, config, &mockPathMatcher{})
 
 	req := httptest.NewRequest("POST", "/test?x=1", strings.NewReader("sample-body"))
 	req.Header.Set("X-Test", "test")

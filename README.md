@@ -58,6 +58,7 @@ handler := govisual.Wrap(
     govisual.WithDashboardPath("/__dashboard"), // Custom dashboard path
     govisual.WithRequestBodyLogging(true),      // Log request bodies
     govisual.WithResponseBodyLogging(true),     // Log response bodies
+    govisual.WithConsoleLogging(true),          // Log request timing to TTY
     govisual.WithIgnorePaths("/health"),        // Paths to ignore
     govisual.WithOpenTelemetry(true),           // Enable OpenTelemetry
     govisual.WithServiceName("my-service"),     // Service name for OTel

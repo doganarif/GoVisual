@@ -103,7 +103,7 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	})
 
 	// Create middleware wrapper
-	wrapped := middleware.Wrap(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config)
+	wrapped := middleware.Wrap(handler, requestStore, config, config)
 
 	// Initialize OpenTelemetry if enabled
 	if config.EnableOpenTelemetry {
