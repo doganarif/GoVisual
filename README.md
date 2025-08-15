@@ -1,13 +1,14 @@
 # GoVisual
 
-A lightweight, zero-configuration HTTP request visualizer and debugger for Go web applications during local development.
+A lightweight, zero-configuration HTTP and WebSocket request visualizer and debugger for Go web applications during local development.
 
 ## Features
 
-- **Real-time Request Monitoring**: Visualize HTTP requests passing through your application
+- **Real-time Request Monitoring**: Visualize HTTP requests and WebSocket connections passing through your application
+- **WebSocket Monitoring**: Track WebSocket handshakes, messages, connection lifecycles, and message direction
 - **Request Inspection**: Deep inspection of headers, body, status codes, and timing information
 - **Middleware Tracing**: Visualize middleware execution flow and identify performance bottlenecks
-- **Zero Configuration**: Drop-in integration with standard Go HTTP handlers
+- **Zero Configuration**: Drop-in integration with standard Go HTTP handlers and WebSocket connections
 - **OpenTelemetry Integration**: Optional export of telemetry data to OpenTelemetry collectors
 
 ## Installation
@@ -44,6 +45,55 @@ func main() {
 ```
 
 Access the dashboard at `http://localhost:8080/__viz`
+
+## WebSocket Quick Start
+
+```go
+package main
+
+import (
+    \"log\"
+    \"net/http\"
+    \"github.com/doganarif/govisual\"
+    \"github.com/gorilla/websocket\"
+)
+
+func main() {
+    upgrader := websocket.Upgrader{
+        CheckOrigin: func(r *http.Request) bool { return true },
+    }
+
+    wsHandler := func(w http.ResponseWriter, r *http.Request) {
+        conn, err := upgrader.Upgrade(w, r, nil)
+        if err != nil {
+            return
+        }
+        defer conn.Close()
+
+        // Handle WebSocket messages
+        for {
+            messageType, message, err := conn.ReadMessage()
+            if err != nil {
+                break
+            }
+            // Echo message back
+            conn.WriteMessage(messageType, message)
+        }
+    }
+
+    // Wrap WebSocket handler with monitoring
+    handler := govisual.WrapWebSocket(
+        wsHandler,
+        govisual.WithRequestBodyLogging(true), // Log message content
+        govisual.WithDashboardPath(\"/__viz\"),
+    )
+
+    http.Handle(\"/ws\", handler)
+    log.Fatal(http.ListenAndServe(\":8080\", nil))
+}
+```
+
+WebSocket connections, handshakes, and messages will appear in the dashboard alongside HTTP requests. You can filter by connection type, message direction, and more.
 
 ## Documentation
 
@@ -168,14 +218,28 @@ This approach allows you to:
 
 ## Examples
 
-### Basic Example
+### Basic HTTP Example
 
-Simple example showing core functionalities:
+Simple example showing core HTTP monitoring functionalities:
 
 ```bash
 cd cmd/examples/basic
 go run main.go
 ```
+
+### WebSocket Example
+
+Comprehensive example demonstrating WebSocket monitoring with interactive test client:
+
+```bash
+go run examples/websocket_example.go
+```
+
+Visit `http://localhost:8080` for an interactive WebSocket test client that demonstrates:
+- WebSocket echo server monitoring
+- Chat room functionality with message tracking
+- Real-time dashboard updates for WebSocket connections
+- Message direction and type filtering
 
 ### OpenTelemetry Example
 
@@ -204,11 +268,12 @@ Visit [Multi-Storage Example](cmd/examples/multistorage/README.md) for detailed 
 
 ![GoVisual Dashboard](docs/dashboard.png)
 
-- **Request Table**: View all captured HTTP requests with method, path, status code, and response time
-- **Request Details**: One-click access to headers, body content, and timing information
+- **Connection Table**: View all captured HTTP requests and WebSocket connections with method, path, status code, and response time
+- **WebSocket Monitoring**: Track WebSocket handshakes, message types, directions (inbound/outbound), connection IDs, and message sizes
+- **Request Details**: One-click access to headers, body content, timing information, and WebSocket-specific data
 - **Middleware Trace**: Interactive visualization of middleware execution flow
-- **Request Filtering**: Filter by HTTP method, status code, path pattern, or duration
-- **Real-time Updates**: See new requests appear instantly as they happen
+- **Advanced Filtering**: Filter by connection type (HTTP/WebSocket), message type, direction, HTTP method, status code, path pattern, or duration
+- **Real-time Updates**: See new requests and WebSocket messages appear instantly as they happen
 
 ## License
 
