@@ -69,21 +69,40 @@
 
   // Apply filters to the requests
   function applyFilters() {
+    const connectionTypeFilter = document.getElementById("connection-type-filter").value;
     const methodFilter = document.getElementById("method-filter").value;
+    const wsMessageTypeFilter = document.getElementById("ws-message-type-filter").value;
+    const wsDirectionFilter = document.getElementById("ws-direction-filter").value;
     const statusFilter = document.getElementById("status-filter").value;
     const pathFilter = document
       .getElementById("path-filter")
       .value.toLowerCase();
     const durationFilter = document.getElementById("duration-filter").value;
+    const connectionIdFilter = document.getElementById("connection-id-filter").value.toLowerCase();
 
     filteredRequests = allRequests.filter((req) => {
+      // Connection type filter
+      if (connectionTypeFilter && req.ConnectionType !== connectionTypeFilter) {
+        return false;
+      }
+
       // Method filter
       if (methodFilter && req.Method !== methodFilter) {
         return false;
       }
 
-      // Status code filter
-      if (statusFilter) {
+      // WebSocket message type filter
+      if (wsMessageTypeFilter && req.WebSocketData && req.WebSocketData.MessageType !== wsMessageTypeFilter) {
+        return false;
+      }
+
+      // WebSocket direction filter  
+      if (wsDirectionFilter && req.WebSocketData && req.WebSocketData.Direction !== wsDirectionFilter) {
+        return false;
+      }
+
+      // Status code filter (only applicable to HTTP requests and WebSocket handshakes)
+      if (statusFilter && req.StatusCode) {
         const firstDigit = Math.floor(req.StatusCode / 100);
         if (statusFilter === "2xx" && firstDigit !== 2) return false;
         if (statusFilter === "3xx" && firstDigit !== 3) return false;
@@ -101,6 +120,12 @@
         durationFilter &&
         (!req.Duration || req.Duration < parseInt(durationFilter))
       ) {
+        return false;
+      }
+
+      // Connection ID filter (for WebSocket logs)
+      if (connectionIdFilter && req.WebSocketData && 
+          !req.WebSocketData.ConnectionID.toLowerCase().includes(connectionIdFilter)) {
         return false;
       }
 
@@ -266,6 +291,13 @@
       timeCell.textContent = new Date(req.Timestamp).toLocaleTimeString();
       row.appendChild(timeCell);
 
+      // Connection type cell
+      const typeCell = document.createElement("td");
+      const connectionType = req.ConnectionType || "http";
+      typeCell.textContent = connectionType.toUpperCase();
+      typeCell.className = "connection-type-" + connectionType;
+      row.appendChild(typeCell);
+
       const methodCell = document.createElement("td");
       methodCell.textContent = req.Method;
       // Add CSS class based on method
@@ -277,16 +309,20 @@
       row.appendChild(pathCell);
 
       const statusCell = document.createElement("td");
-      statusCell.textContent = req.StatusCode;
-      // Add CSS class based on status code
-      if (req.StatusCode >= 200 && req.StatusCode < 300) {
-        statusCell.className = "status-success";
-      } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
-        statusCell.className = "status-redirect";
-      } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
-        statusCell.className = "status-client-error";
-      } else if (req.StatusCode >= 500) {
-        statusCell.className = "status-server-error";
+      if (req.StatusCode) {
+        statusCell.textContent = req.StatusCode;
+        // Add CSS class based on status code
+        if (req.StatusCode >= 200 && req.StatusCode < 300) {
+          statusCell.className = "status-success";
+        } else if (req.StatusCode >= 300 && req.StatusCode < 400) {
+          statusCell.className = "status-redirect";
+        } else if (req.StatusCode >= 400 && req.StatusCode < 500) {
+          statusCell.className = "status-client-error";
+        } else if (req.StatusCode >= 500) {
+          statusCell.className = "status-server-error";
+        }
+      } else {
+        statusCell.textContent = "-";
       }
       row.appendChild(statusCell);
 
@@ -303,6 +339,29 @@
         durationCell.textContent = "N/A";
       }
       row.appendChild(durationCell);
+
+      // WebSocket info cell
+      const wsInfoCell = document.createElement("td");
+      if (req.WebSocketData) {
+        let wsInfo = "";
+        if (req.WebSocketData.ConnectionID) {
+          wsInfo += "ID: " + req.WebSocketData.ConnectionID.substring(0, 8) + "...";
+        }
+        if (req.WebSocketData.MessageType) {
+          wsInfo += " | " + req.WebSocketData.MessageType;
+        }
+        if (req.WebSocketData.Direction) {
+          wsInfo += " (" + req.WebSocketData.Direction + ")";
+        }
+        if (req.WebSocketData.MessageSize) {
+          wsInfo += " | " + formatBytes(req.WebSocketData.MessageSize);
+        }
+        wsInfoCell.textContent = wsInfo;
+        wsInfoCell.className = "ws-info";
+      } else {
+        wsInfoCell.textContent = "-";
+      }
+      row.appendChild(wsInfoCell);
 
       tbody.appendChild(row);
     });
@@ -372,11 +431,64 @@
     document.getElementById("detail-method").textContent = req.Method;
     document.getElementById("detail-path").textContent =
       req.Path + (req.Query ? "?" + req.Query : "");
-    document.getElementById("detail-status").textContent = req.StatusCode;
+    
+    // Show connection type
+    const connectionTypeElement = document.getElementById("detail-connection-type");
+    if (connectionTypeElement) {
+      connectionTypeElement.textContent = (req.ConnectionType || "http").toUpperCase();
+    }
+
+    // Show status code (may not exist for WebSocket messages)
+    const statusElement = document.getElementById("detail-status");
+    if (statusElement) {
+      statusElement.textContent = req.StatusCode || "N/A";
+    }
+
     document.getElementById("detail-duration").textContent =
       req.Duration !== undefined && req.Duration !== null
         ? req.Duration + " ms"
         : "N/A";
+
+    // Show WebSocket-specific details if available
+    const wsDetailsContainer = document.getElementById("ws-details-container");
+    if (wsDetailsContainer) {
+      if (req.WebSocketData) {
+        wsDetailsContainer.style.display = "block";
+        
+        const wsConnectionId = document.getElementById("ws-connection-id");
+        if (wsConnectionId) {
+          wsConnectionId.textContent = req.WebSocketData.ConnectionID || "N/A";
+        }
+
+        const wsMessageType = document.getElementById("ws-message-type");
+        if (wsMessageType) {
+          wsMessageType.textContent = req.WebSocketData.MessageType || "N/A";
+        }
+
+        const wsDirection = document.getElementById("ws-direction");
+        if (wsDirection) {
+          wsDirection.textContent = req.WebSocketData.Direction || "N/A";
+        }
+
+        const wsMessageSize = document.getElementById("ws-message-size");
+        if (wsMessageSize) {
+          wsMessageSize.textContent = req.WebSocketData.MessageSize ? 
+            formatBytes(req.WebSocketData.MessageSize) : "N/A";
+        }
+
+        const wsSubprotocol = document.getElementById("ws-subprotocol");
+        if (wsSubprotocol) {
+          wsSubprotocol.textContent = req.WebSocketData.Subprotocol || "None";
+        }
+
+        const wsIsHandshake = document.getElementById("ws-is-handshake");
+        if (wsIsHandshake) {
+          wsIsHandshake.textContent = req.WebSocketData.IsHandshake ? "Yes" : "No";
+        }
+      } else {
+        wsDetailsContainer.style.display = "none";
+      }
+    }
 
     // Try to add replay button safely
     try {
@@ -613,16 +725,33 @@
 
   document.getElementById("reset-filters").addEventListener("click", () => {
     // Reset filter inputs
+    document.getElementById("connection-type-filter").value = "";
     document.getElementById("method-filter").value = "";
+    document.getElementById("ws-message-type-filter").value = "";
+    document.getElementById("ws-direction-filter").value = "";
     document.getElementById("status-filter").value = "";
     document.getElementById("path-filter").value = "";
     document.getElementById("duration-filter").value = "";
+    document.getElementById("connection-id-filter").value = "";
 
     // Reset filtered data
     filteredRequests = [...allRequests];
     updateTable(filteredRequests);
     updateStats(filteredRequests);
   });
+
+  // Helper function to format bytes
+  function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  }
 
   document
     .getElementById("clear-requests")

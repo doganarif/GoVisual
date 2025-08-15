@@ -66,6 +66,89 @@ func setupSignalHandler() {
 	})
 }
 
+// WrapWebSocket wraps a WebSocket handler with request visualization middleware
+func WrapWebSocket(handler http.HandlerFunc, opts ...Option) http.Handler {
+	// Apply options to default config
+	config := defaultConfig()
+	for _, opt := range opts {
+		opt(config)
+	}
+
+	// Create store based on configuration
+	var requestStore store.Store
+	var err error
+
+	storeConfig := &store.StorageConfig{
+		Type:             config.StorageType,
+		Capacity:         config.MaxRequests,
+		ConnectionString: config.ConnectionString,
+		TableName:        config.TableName,
+		TTL:              config.RedisTTL,
+		ExistingDB:       config.ExistingDB,
+	}
+
+	requestStore, err = store.NewStore(storeConfig)
+	if err != nil {
+		log.Printf("Failed to create configured storage backend: %v. Falling back to in-memory storage.", err)
+		requestStore = store.NewInMemoryStore(config.MaxRequests)
+	}
+
+	// Add store cleanup to shutdown functions
+	addShutdownFunc(func(ctx context.Context) error {
+		if err := requestStore.Close(); err != nil {
+			log.Printf("Error closing storage: %v", err)
+			return err
+		}
+		return nil
+	})
+
+	// Create WebSocket wrapper options
+	wsOpts := &middleware.WebSocketWrapperOptions{
+		LogMessageBody: config.LogRequestBody,
+	}
+
+	// Create WebSocket wrapper
+	wrapped := middleware.WrapWebSocket(handler, requestStore, config, wsOpts)
+
+	// Initialize OpenTelemetry if enabled
+	if config.EnableOpenTelemetry {
+		ctx := context.Background()
+		shutdown, err := telemetry.InitTracer(ctx, config.ServiceName, config.ServiceVersion, config.OTelEndpoint)
+		if err != nil {
+			log.Printf("Failed to initialize OpenTelemetry: %v", err)
+		} else {
+			log.Printf("OpenTelemetry initialized with service name: %s, endpoint: %s", config.ServiceName, config.OTelEndpoint)
+
+			// Add OpenTelemetry shutdown to shutdown functions
+			addShutdownFunc(shutdown)
+
+			// Wrap with OpenTelemetry middleware
+			wrapped = middleware.NewOTelMiddleware(wrapped, config.ServiceName, config.ServiceVersion)
+		}
+	}
+
+	// Set up the single signal handler
+	setupSignalHandler()
+
+	// Create dashboard handler
+	dashHandler := dashboard.NewHandler(requestStore)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, config.DashboardPath) {
+			dashPath := strings.TrimPrefix(r.URL.Path, config.DashboardPath)
+			if dashPath == "" {
+				http.Redirect(w, r, config.DashboardPath+"/", http.StatusFound)
+				return
+			}
+			http.StripPrefix(config.DashboardPath, dashHandler).ServeHTTP(w, r)
+			return
+		}
+
+		// Otherwise, serve the WebSocket application
+		wrapped.ServeHTTP(w, r)
+	})
+}
+
 // Wrap wraps an http.Handler with request visualization middleware
 func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	// Apply options to default config

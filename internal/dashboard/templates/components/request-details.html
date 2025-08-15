@@ -1,7 +1,7 @@
 {{define "request-details"}}
 <div id="requestDetails" class="card" style="display: none">
   <div class="card-header">
-    <h2>Request Details</h2>
+    <h2>Connection Details</h2>
   </div>
   <div id="detailsContent">
     <div class="detail-row">
@@ -9,6 +9,9 @@
     </div>
     <div class="detail-row">
       <strong>Time:</strong> <span id="detail-time"></span>
+    </div>
+    <div class="detail-row">
+      <strong>Connection Type:</strong> <span id="detail-connection-type"></span>
     </div>
     <div class="detail-row">
       <strong>Method:</strong> <span id="detail-method"></span>
@@ -23,6 +26,29 @@
       <strong>Duration:</strong> <span id="detail-duration"></span>
     </div>
 
+    <!-- WebSocket-specific details -->
+    <div id="ws-details-container" style="display: none">
+      <h3>WebSocket Details</h3>
+      <div class="detail-row">
+        <strong>Connection ID:</strong> <span id="ws-connection-id"></span>
+      </div>
+      <div class="detail-row">
+        <strong>Message Type:</strong> <span id="ws-message-type"></span>
+      </div>
+      <div class="detail-row">
+        <strong>Direction:</strong> <span id="ws-direction"></span>
+      </div>
+      <div class="detail-row">
+        <strong>Message Size:</strong> <span id="ws-message-size"></span>
+      </div>
+      <div class="detail-row">
+        <strong>Subprotocol:</strong> <span id="ws-subprotocol"></span>
+      </div>
+      <div class="detail-row">
+        <strong>Is Handshake:</strong> <span id="ws-is-handshake"></span>
+      </div>
+    </div>
+
     <h3>Request Headers</h3>
     <pre id="detail-request-headers"></pre>
 
@@ -30,7 +56,7 @@
     <pre id="detail-response-headers"></pre>
 
     <div id="request-body-container">
-      <h3>Request Body</h3>
+      <h3>Request/Message Body</h3>
       <pre id="detail-request-body"></pre>
     </div>
 

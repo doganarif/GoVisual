@@ -3,7 +3,16 @@
   <h2>Filters</h2>
   <div class="filter-grid">
     <div class="filter-group">
-      <label for="method-filter">HTTP Method</label>
+      <label for="connection-type-filter">Connection Type</label>
+      <select id="connection-type-filter" class="filter-select">
+        <option value="">All Types</option>
+        <option value="http">HTTP</option>
+        <option value="websocket">WebSocket</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="method-filter">Method</label>
       <select id="method-filter" class="filter-select">
         <option value="">All Methods</option>
         <option value="GET">GET</option>
@@ -11,6 +20,29 @@
         <option value="PUT">PUT</option>
         <option value="DELETE">DELETE</option>
         <option value="PATCH">PATCH</option>
+        <option value="WEBSOCKET">WebSocket Handshake</option>
+        <option value="WS_MESSAGE">WebSocket Message</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="ws-message-type-filter">Message Type</label>
+      <select id="ws-message-type-filter" class="filter-select">
+        <option value="">All Message Types</option>
+        <option value="text">Text</option>
+        <option value="binary">Binary</option>
+        <option value="ping">Ping</option>
+        <option value="pong">Pong</option>
+        <option value="close">Close</option>
+      </select>
+    </div>
+
+    <div class="filter-group">
+      <label for="ws-direction-filter">Message Direction</label>
+      <select id="ws-direction-filter" class="filter-select">
+        <option value="">All Directions</option>
+        <option value="inbound">Inbound</option>
+        <option value="outbound">Outbound</option>
       </select>
     </div>
 
@@ -42,6 +74,16 @@
         id="duration-filter"
         class="filter-input"
         placeholder="Min duration..."
+      />
+    </div>
+
+    <div class="filter-group">
+      <label for="connection-id-filter">Connection ID</label>
+      <input
+        type="text"
+        id="connection-id-filter"
+        class="filter-input"
+        placeholder="WebSocket connection ID..."
       />
     </div>
   </div>
