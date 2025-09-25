@@ -231,11 +231,17 @@ func (rt *RequestTracer) getCurrentTrace() *TraceEntry {
 		return nil
 	}
 
+	// Check if root index is valid
+	if rt.currentPath[0] >= len(rt.Traces) {
+		return nil
+	}
+
 	trace := &rt.Traces[rt.currentPath[0]]
 	for i := 1; i < len(rt.currentPath); i++ {
-		if rt.currentPath[i] < len(trace.Children) {
-			trace = &trace.Children[rt.currentPath[i]]
+		if rt.currentPath[i] >= len(trace.Children) {
+			return nil // Invalid path, cannot traverse further
 		}
+		trace = &trace.Children[rt.currentPath[i]]
 	}
 	return trace
 }
@@ -245,11 +251,17 @@ func (rt *RequestTracer) getParentTrace() *TraceEntry {
 		return nil
 	}
 
+	// Check if root index is valid
+	if rt.currentPath[0] >= len(rt.Traces) {
+		return nil
+	}
+
 	trace := &rt.Traces[rt.currentPath[0]]
 	for i := 1; i < len(rt.currentPath)-1; i++ {
-		if rt.currentPath[i] < len(trace.Children) {
-			trace = &trace.Children[rt.currentPath[i]]
+		if rt.currentPath[i] >= len(trace.Children) {
+			return nil // Invalid path, cannot traverse further
 		}
+		trace = &trace.Children[rt.currentPath[i]]
 	}
 	return trace
 }
