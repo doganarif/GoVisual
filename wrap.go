@@ -12,6 +12,7 @@ import (
 
 	"github.com/doganarif/govisual/internal/dashboard"
 	"github.com/doganarif/govisual/internal/middleware"
+	"github.com/doganarif/govisual/internal/profiling"
 	"github.com/doganarif/govisual/internal/store"
 	"github.com/doganarif/govisual/internal/telemetry"
 )
@@ -102,8 +103,23 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		return nil
 	})
 
-	// Create middleware wrapper
-	wrapped := middleware.Wrap(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config)
+	// Create profiler if enabled
+	var profiler *profiling.Profiler
+	if config.EnableProfiling {
+		profiler = profiling.NewProfiler(config.MaxProfileMetrics)
+		profiler.SetEnabled(config.EnableProfiling)
+		profiler.SetProfileType(config.ProfileType)
+		profiler.SetThreshold(config.ProfileThreshold)
+		log.Printf("Performance profiling enabled with threshold: %v", config.ProfileThreshold)
+	}
+
+	// Create middleware wrapper with profiling support
+	var wrapped http.Handler
+	if profiler != nil {
+		wrapped = middleware.WrapWithProfiling(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config, profiler)
+	} else {
+		wrapped = middleware.Wrap(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config)
+	}
 
 	// Initialize OpenTelemetry if enabled
 	if config.EnableOpenTelemetry {
@@ -125,16 +141,12 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	// Set up the single signal handler
 	setupSignalHandler()
 
-	// Create dashboard handler
-	dashHandler := dashboard.NewHandler(requestStore)
+	// Create dashboard handler with profiler
+	dashHandler := dashboard.NewHandler(requestStore, profiler)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, config.DashboardPath) {
-			dashPath := strings.TrimPrefix(r.URL.Path, config.DashboardPath)
-			if dashPath == "" {
-				http.Redirect(w, r, config.DashboardPath+"/", http.StatusFound)
-				return
-			}
+			// Handle the dashboard routes
 			http.StripPrefix(config.DashboardPath, dashHandler).ServeHTTP(w, r)
 			return
 		}

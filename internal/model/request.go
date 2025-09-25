@@ -3,23 +3,26 @@ package model
 import (
 	"net/http"
 	"time"
+
+	"github.com/doganarif/govisual/internal/profiling"
 )
 
 type RequestLog struct {
-	ID              string                   `json:"ID" bson:"_id"`
-	Timestamp       time.Time                `json:"Timestamp"`
-	Method          string                   `json:"Method"`
-	Path            string                   `json:"Path"`
-	Query           string                   `json:"Query"`
-	RequestHeaders  http.Header              `json:"RequestHeaders"`
-	ResponseHeaders http.Header              `json:"ResponseHeaders"`
-	StatusCode      int                      `json:"StatusCode"`
-	Duration        int64                    `json:"Duration"`
-	RequestBody     string                   `json:"RequestBody,omitempty"`
-	ResponseBody    string                   `json:"ResponseBody,omitempty"`
-	Error           string                   `json:"Error,omitempty"`
-	MiddlewareTrace []map[string]interface{} `json:"MiddlewareTrace,omitempty"`
-	RouteTrace      map[string]interface{}   `json:"RouteTrace,omitempty"`
+	ID                 string                   `json:"ID" bson:"_id"`
+	Timestamp          time.Time                `json:"Timestamp"`
+	Method             string                   `json:"Method"`
+	Path               string                   `json:"Path"`
+	Query              string                   `json:"Query"`
+	RequestHeaders     http.Header              `json:"RequestHeaders"`
+	ResponseHeaders    http.Header              `json:"ResponseHeaders"`
+	StatusCode         int                      `json:"StatusCode"`
+	Duration           int64                    `json:"Duration"`
+	RequestBody        string                   `json:"RequestBody,omitempty"`
+	ResponseBody       string                   `json:"ResponseBody,omitempty"`
+	Error              string                   `json:"Error,omitempty"`
+	MiddlewareTrace    []map[string]interface{} `json:"MiddlewareTrace,omitempty"`
+	RouteTrace         map[string]interface{}   `json:"RouteTrace,omitempty"`
+	PerformanceMetrics *profiling.Metrics       `json:"PerformanceMetrics,omitempty" bson:"PerformanceMetrics,omitempty"`
 }
 
 func NewRequestLog(req *http.Request) *RequestLog {

@@ -157,13 +157,19 @@ classDiagram
     }
 
     class Handler {
-        -Store store
-        -template
+        +Store store
+        +Profiler profiler
+        +staticFS
         +ServeHTTP(w, r)
-        -handleDashboard(w, r)
-        -handleAPIRequests(w, r)
-        -handleClearRequests(w, r)
-        -handleSSE(w, r)
+        +handleAPIRequests(w, r)
+        +handleClearRequests(w, r)
+        +handleSSE(w, r)
+        +handleCompareRequests(w, r)
+        +handleReplayRequest(w, r)
+        +handleMetrics(w, r)
+        +handleFlameGraph(w, r)
+        +handleBottlenecks(w, r)
+        +handleSystemInfo(w, r)
     }
 
     class Middleware {
@@ -230,12 +236,13 @@ This ensures memory usage remains constant regardless of request volume.
 
 ### Dashboard Implementation
 
-The dashboard is implemented using embedded HTML templates, CSS, and JavaScript, with no external dependencies:
+The dashboard is implemented using a React-based frontend with a Go backend API:
 
-1. HTML templates are embedded using Go's `embed` package
+1. React frontend built with Preact and TypeScript, bundled and embedded using Go's `embed` package
 2. Server-Sent Events (SSE) provide real-time updates
-3. Client-side filtering and sorting minimize server load
-4. Data is fetched via simple REST endpoints
+3. Client-side filtering, sorting, and visualization minimize server load
+4. RESTful API endpoints serve JSON data for requests, metrics, and system information
+5. Advanced features include flame graphs, performance profiling, and request comparison
 
 ### OpenTelemetry Integration
 
