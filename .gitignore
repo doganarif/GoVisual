@@ -1,48 +1,40 @@
-.DS_Store
-*.[56789ao]
-*.a[56789o]
-*.so
-*.pyc
-._*
-.nfs.*
-[56789a].out
-*~
-*.orig
-*.rej
+# Binaries for programs and plugins
 *.exe
-.*.swp
-core
-*.db
-*.cgo*.go
-*.cgo*.c
-_cgo_*
-_obj
-_test
-_testmain.go
+*.exe~
+*.dll
+*.so
+*.dylib
 
-/VERSION.cache
-/bin/
-/build.out
-/doc/articles/wiki/*.bin
-/goinstall.log
-/last-change
-/misc/cgo/life/run.out
-/misc/cgo/stdio/run.out
-/misc/cgo/testso/main
-/pkg/
-/src/*.*/
-/src/cmd/cgo/zdefaultcc.go
-/src/cmd/dist/dist
-/src/cmd/go/internal/cfg/zdefaultcc.go
-/src/cmd/internal/objabi/zbootstrap.go
-/src/go/build/zcgo.go
-/src/go/doc/headscan
-/src/internal/buildcfg/zbootstrap.go
-/src/internal/runtime/sys/zversion.go
-/src/unicode/maketables
-/src/time/tzdata/zzipdata.go
-/test.out
-/test/garbage/*.out
-/test/pass.out
-/test/run.out
-/test/times.out
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node.js dependencies
+node_modules/
+package-lock.json
+
+# Built frontend files (these are committed for Go embed)
+# internal/dashboard/static/dashboard.js
+# internal/dashboard/static/styles.css
+
+# Example binaries
+cmd/examples/*/profiling-example
+test-build

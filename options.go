@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/doganarif/govisual/internal/profiling"
 	"github.com/doganarif/govisual/internal/store"
 )
 
@@ -43,6 +45,15 @@ type Config struct {
 
 	// Existing database connection for SQLite
 	ExistingDB *sql.DB
+
+	// Performance Profiling configuration
+	EnableProfiling bool
+
+	ProfileType profiling.ProfileType
+
+	ProfileThreshold time.Duration
+
+	MaxProfileMetrics int
 }
 
 // Option is a function that modifies the configuration
@@ -190,6 +201,34 @@ func (c *Config) ShouldIgnorePath(path string) bool {
 	return false
 }
 
+// WithProfiling enables or disables performance profiling
+func WithProfiling(enabled bool) Option {
+	return func(c *Config) {
+		c.EnableProfiling = enabled
+	}
+}
+
+// WithProfileType sets the types of profiling to perform
+func WithProfileType(profileType profiling.ProfileType) Option {
+	return func(c *Config) {
+		c.ProfileType = profileType
+	}
+}
+
+// WithProfileThreshold sets the minimum duration to trigger profiling
+func WithProfileThreshold(threshold time.Duration) Option {
+	return func(c *Config) {
+		c.ProfileThreshold = threshold
+	}
+}
+
+// WithMaxProfileMetrics sets the maximum number of profile metrics to store
+func WithMaxProfileMetrics(max int) Option {
+	return func(c *Config) {
+		c.MaxProfileMetrics = max
+	}
+}
+
 // defaultConfig returns the default configuration
 func defaultConfig() *Config {
 	return &Config{
@@ -205,5 +244,9 @@ func defaultConfig() *Config {
 		StorageType:         store.StorageTypeMemory,
 		TableName:           "govisual_requests",
 		RedisTTL:            86400, // 24 hours
+		EnableProfiling:     false,
+		ProfileType:         profiling.ProfileAll,
+		ProfileThreshold:    10 * time.Millisecond,
+		MaxProfileMetrics:   1000,
 	}
 }

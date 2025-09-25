@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom animations */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    transform: scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* Smooth transitions for interactive elements */
+  button, a, input, select, textarea {
+    @apply transition-all duration-200;
+  }
+  
+  /* Focus styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary/20 ring-offset-2;
+  }
+  :root {
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer components {
+  /* Animation utilities */
+  .animate-in {
+    animation-fill-mode: both;
+    animation-duration: 0.5s;
+  }
+  
+  .fade-in {
+    animation-name: fadeIn;
+  }
+  
+  .fade-in-50 {
+    animation-name: fadeIn;
+    animation-duration: 0.3s;
+  }
+  
+  .slide-in-from-bottom {
+    animation-name: slideUp;
+  }
+  
+  .scale-in {
+    animation-name: scaleIn;
+  }
+  
+  /* Hover effects */
+  .hover-lift {
+    @apply transition-transform duration-200 hover:-translate-y-0.5;
+  }
+  
+  .hover-glow {
+    @apply transition-shadow duration-200 hover:shadow-lg;
+  }
+  
+  /* Custom scrollbar */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.gray.400') transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500;
+  }
+
+  /* Status colors - using neutral colors */
+  .status-success {
+    @apply text-foreground;
+  }
+  
+  .status-warning {
+    @apply text-muted-foreground;
+  }
+  
+  .status-error {
+    @apply text-foreground;
+  }
+  
+  /* Method styles - all neutral with hover effects */
+  .method-get,
+  .method-post,
+  .method-put,
+  .method-delete,
+  .method-patch {
+    @apply font-medium transition-opacity hover:opacity-70;
+  }
+  
+  /* Card hover effects */
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-md hover:-translate-y-0.5;
+  }
+  
+  /* Table row hover */
+  .table-row-hover {
+    @apply transition-colors duration-150 hover:bg-muted/50;
+  }
+  
+  /* Drawer animations */
+  .drawer-backdrop {
+    animation: fadeIn 0.2s ease-out;
+  }
+  
+  .drawer-content {
+    animation: slideUp 0.3s ease-out;
+  }
+}

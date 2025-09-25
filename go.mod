@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/go-redis/redis/v8 v8.11.5
+	github.com/google/pprof v0.0.0-20240227163752-401108e1b7e7
 	github.com/lib/pq v1.10.9
 	go.opentelemetry.io/otel v1.35.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.24.0
