@@ -1,8 +1,10 @@
 package profiling
 
 import (
+	"bytes"
 	"context"
 	"runtime"
+	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,12 +76,21 @@ type Bottleneck struct {
 
 // Profiler handles performance profiling for requests
 type Profiler struct {
-	enabled     atomic.Bool
-	profileType atomic.Uint32
-	threshold   time.Duration // Minimum duration to trigger profiling
-	mu          sync.RWMutex
-	metrics     map[string]*Metrics
-	maxMetrics  int
+	enabled          atomic.Bool
+	profileType      atomic.Uint32
+	threshold        time.Duration // Minimum duration to trigger profiling
+	mu               sync.RWMutex
+	metrics          map[string]*Metrics
+	maxMetrics       int
+	cpuProfileMu     sync.Mutex         // Protects CPU profiling global state
+	activeCPUProfile *cpuProfileSession // Currently active CPU profile session
+}
+
+// cpuProfileSession represents an active CPU profiling session
+type cpuProfileSession struct {
+	requestID string
+	buffer    bytes.Buffer
+	started   bool
 }
 
 // NewProfiler creates a new profiler instance
@@ -129,6 +140,24 @@ func (p *Profiler) StartProfiling(ctx context.Context, requestID string) context
 		Bottlenecks:     make([]Bottleneck, 0),
 	}
 
+	// Start CPU profiling if enabled (thread-safe)
+	if p.hasProfile(ProfileCPU) {
+		p.cpuProfileMu.Lock()
+		if p.activeCPUProfile == nil {
+			// No active CPU profile, start one for this request
+			session := &cpuProfileSession{
+				requestID: requestID,
+				buffer:    bytes.Buffer{},
+				started:   false,
+			}
+			if err := pprof.StartCPUProfile(&session.buffer); err == nil {
+				session.started = true
+				p.activeCPUProfile = session
+			}
+		}
+		p.cpuProfileMu.Unlock()
+	}
+
 	// Capture initial memory stats
 	if p.hasProfile(ProfileMemory) {
 		var m runtime.MemStats
@@ -172,8 +201,21 @@ func (p *Profiler) EndProfiling(ctx context.Context) *Metrics {
 	p.mu.RUnlock()
 
 	if metrics.Duration < threshold {
+		// Stop CPU profiling if this request started it
+		p.stopCPUProfilingIfActive(metrics.RequestID)
 		p.removeMetrics(metrics.RequestID)
 		return nil
+	}
+
+	// Stop CPU profiling and capture data if this request started it
+	if p.hasProfile(ProfileCPU) {
+		p.cpuProfileMu.Lock()
+		if p.activeCPUProfile != nil && p.activeCPUProfile.requestID == metrics.RequestID && p.activeCPUProfile.started {
+			pprof.StopCPUProfile()
+			metrics.CPUProfile = p.activeCPUProfile.buffer.Bytes()
+			p.activeCPUProfile = nil
+		}
+		p.cpuProfileMu.Unlock()
 	}
 
 	// Capture final memory stats
@@ -399,6 +441,17 @@ func (p *Profiler) removeMetrics(requestID string) {
 
 type profileContextKey struct{}
 type tracerKey struct{}
+
+// stopCPUProfilingIfActive stops CPU profiling if the given request started it
+func (p *Profiler) stopCPUProfilingIfActive(requestID string) {
+	p.cpuProfileMu.Lock()
+	defer p.cpuProfileMu.Unlock()
+
+	if p.activeCPUProfile != nil && p.activeCPUProfile.requestID == requestID && p.activeCPUProfile.started {
+		pprof.StopCPUProfile()
+		p.activeCPUProfile = nil
+	}
+}
 
 // SetTracer associates a tracer with the profiling context
 func (p *Profiler) SetTracer(ctx context.Context, tracer interface{}) {

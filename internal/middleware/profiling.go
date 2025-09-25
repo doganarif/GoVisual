@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"runtime/pprof"
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
@@ -53,15 +52,6 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 		}
 		r = r.WithContext(ctx)
 
-		// Capture CPU profile if enabled
-		var cpuBuf bytes.Buffer
-		var cpuProfiling bool
-		if profiler != nil {
-			if err := pprof.StartCPUProfile(&cpuBuf); err == nil {
-				cpuProfiling = true
-			}
-		}
-
 		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {
 			bodyBytes, _ := io.ReadAll(r.Body)
@@ -91,11 +81,6 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 		// Call the handler
 		handler.ServeHTTP(resWriter, r)
 
-		// Stop CPU profiling
-		if cpuProfiling {
-			pprof.StopCPUProfile()
-		}
-
 		// Calculate duration
 		duration := time.Since(start)
 		reqLog.Duration = duration.Milliseconds()
@@ -103,10 +88,6 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 		// End profiling and get metrics
 		if profiler != nil {
 			if metrics := profiler.EndProfiling(ctx); metrics != nil {
-				// Store CPU profile data if available
-				if cpuBuf.Len() > 0 {
-					metrics.CPUProfile = cpuBuf.Bytes()
-				}
 				reqLog.PerformanceMetrics = metrics
 			}
 		}
