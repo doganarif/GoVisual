@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/internal/options"
 	"github.com/doganarif/govisual/internal/profiling"
 	"github.com/doganarif/govisual/internal/store"
 )
@@ -21,7 +22,7 @@ type ProfilingConfig struct {
 }
 
 // WrapWithProfiling wraps an http.Handler with request visualization and performance profiling
-func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler) http.Handler {
+func WrapWithProfiling(handler http.Handler, store store.Store, config *options.Config, pathMatcher PathMatcher, profiler *profiling.Profiler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
@@ -53,7 +54,7 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 		r = r.WithContext(ctx)
 
 		// Capture request body if enabled
-		if logRequestBody && r.Body != nil {
+		if config.LogRequestBody && r.Body != nil {
 			bodyBytes, _ := io.ReadAll(r.Body)
 			r.Body.Close()
 			reqLog.RequestBody = string(bodyBytes)
@@ -71,7 +72,7 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 			ctx:      ctx,
 		}
 
-		if logResponseBody {
+		if config.LogResponseBody {
 			resWriter.responseWriter.buffer = &bytes.Buffer{}
 		}
 
@@ -131,7 +132,7 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 		}
 
 		// Capture response body if enabled
-		if logResponseBody && resWriter.responseWriter.buffer != nil {
+		if config.LogResponseBody && resWriter.responseWriter.buffer != nil {
 			reqLog.ResponseBody = resWriter.responseWriter.buffer.String()
 		}
 
