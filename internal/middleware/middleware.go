@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/internal/options"
 	"github.com/doganarif/govisual/internal/store"
 )
 
@@ -39,7 +40,7 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 }
 
 // Wrap wraps an http.Handler with the request visualization middleware
-func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher) http.Handler {
+func Wrap(handler http.Handler, store store.Store, config *options.Config, pathMatcher PathMatcher) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
@@ -51,7 +52,7 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 		reqLog := model.NewRequestLog(r)
 
 		// Capture request body if enabled
-		if logRequestBody && r.Body != nil {
+		if config.LogRequestBody && r.Body != nil {
 			// Read the body
 			bodyBytes, _ := io.ReadAll(r.Body)
 			r.Body.Close()
@@ -65,7 +66,7 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 
 		// Create response writer wrapper
 		var resWriter *responseWriter
-		if logResponseBody {
+		if config.LogResponseBody {
 			resWriter = &responseWriter{
 				ResponseWriter: w,
 				statusCode:     200, // Default status code
@@ -111,7 +112,7 @@ func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBo
 		}
 
 		// Capture response body if enabled
-		if logResponseBody && resWriter.buffer != nil {
+		if config.LogResponseBody && resWriter.buffer != nil {
 			reqLog.ResponseBody = resWriter.buffer.String()
 		}
 

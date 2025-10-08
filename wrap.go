@@ -116,9 +116,9 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	// Create middleware wrapper with profiling support
 	var wrapped http.Handler
 	if profiler != nil {
-		wrapped = middleware.WrapWithProfiling(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config, profiler)
+		wrapped = middleware.WrapWithProfiling(handler, requestStore, config, config, profiler)
 	} else {
-		wrapped = middleware.Wrap(handler, requestStore, config.LogRequestBody, config.LogResponseBody, config)
+		wrapped = middleware.Wrap(handler, requestStore, config, config)
 	}
 
 	// Initialize OpenTelemetry if enabled
