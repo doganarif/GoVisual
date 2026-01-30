@@ -21,6 +21,10 @@ func main() {
 	)
 	flag.IntVar(&port, "port", 8080, "HTTP server port")
 	flag.BoolVar(&enableOTel, "otel", true, "Enable OpenTelemetry")
+
+	var otelExporter string
+	flag.StringVar(&otelExporter, "exporter", "otlp", "OpenTelemetry exporter (otlp or stdout)")
+
 	flag.Parse()
 
 	// Create HTTP mux
@@ -46,8 +50,9 @@ func main() {
 			govisual.WithServiceName("govisual-otel-example"),
 			govisual.WithServiceVersion("1.0.0"),
 			govisual.WithOTelEndpoint("localhost:4317"),
+			govisual.WithOTelExporter(otelExporter),
 		)
-		log.Println("🔭 OpenTelemetry enabled!")
+		log.Printf("🔭 OpenTelemetry enabled with %s exporter!", otelExporter)
 	}
 
 	// Wrap with GoVisual
