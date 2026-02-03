@@ -7,16 +7,12 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -80,26 +76,15 @@ func InitTracer(ctx context.Context, cfg Config) (shutdown func(context.Context)
 			endpoint = "localhost:4317"
 		}
 
-		var opts []grpc.DialOption
+		opts := []otlptracegrpc.Option{
+			otlptracegrpc.WithEndpoint(endpoint),
+		}
 		if cfg.Insecure {
-			opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		} else {
-			opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(nil)))
-		}
-		opts = append(opts, grpc.WithBlock())
-
-		// Create gRPC connection to collector
-		conn, err := grpc.DialContext(ctx, endpoint, opts...)
-		if err != nil {
-			return nil, err
+			opts = append(opts, otlptracegrpc.WithInsecure())
 		}
 
-		// Create OTLP exporter
-		traceExporter, err = otlptrace.New(ctx,
-			otlptracegrpc.NewClient(
-				otlptracegrpc.WithGRPCConn(conn),
-			),
-		)
+		// Create OTLP exporter using the modern API (avoids deprecated grpc.DialContext)
+		traceExporter, err = otlptracegrpc.New(ctx, opts...)
 		if err != nil {
 			return nil, err
 		}
