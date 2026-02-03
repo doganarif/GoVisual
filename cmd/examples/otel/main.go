@@ -23,7 +23,7 @@ func main() {
 	flag.BoolVar(&enableOTel, "otel", true, "Enable OpenTelemetry")
 
 	var otelExporter string
-	flag.StringVar(&otelExporter, "exporter", "otlp", "OpenTelemetry exporter (otlp or stdout)")
+	flag.StringVar(&otelExporter, "exporter", "otlp", "OpenTelemetry exporter (otlp, stdout, or noop)")
 
 	flag.Parse()
 

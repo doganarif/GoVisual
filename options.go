@@ -133,7 +133,8 @@ func WithOTelInsecure(insecure bool) Option {
 	}
 }
 
-// WithOTelExporter sets the type of exporter to use (otlp or stdout)
+// WithOTelExporter sets the type of exporter to use.
+// Valid values: "otlp" (default), "stdout" (for debugging), "noop" (for benchmarking)
 func WithOTelExporter(exporterType string) Option {
 	return func(c *Config) {
 		c.OTelExporter = exporterType
