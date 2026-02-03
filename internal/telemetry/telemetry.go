@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -23,7 +24,21 @@ const (
 	ExporterOTLP = "otlp"
 	// ExporterStdout is the stdout exporter for debugging
 	ExporterStdout = "stdout"
+	// ExporterNoop is a no-operation exporter for benchmarking
+	ExporterNoop = "noop"
 )
+
+// noopExporter is a SpanExporter that does nothing.
+// Useful for benchmarking tracing overhead without network I/O.
+type noopExporter struct{}
+
+func (e *noopExporter) ExportSpans(_ context.Context, _ []sdktrace.ReadOnlySpan) error {
+	return nil
+}
+
+func (e *noopExporter) Shutdown(_ context.Context) error {
+	return nil
+}
 
 // Config holds the configuration for the telemetry package
 type Config struct {
@@ -56,7 +71,9 @@ func InitTracer(ctx context.Context, cfg Config) (shutdown func(context.Context)
 		if err != nil {
 			return nil, err
 		}
-	default: // ExporterOTLP
+	case ExporterNoop:
+		traceExporter = &noopExporter{}
+	case ExporterOTLP, "":
 		// If no endpoint is provided, use a sensible default for local development
 		endpoint := cfg.Endpoint
 		if endpoint == "" {
@@ -86,6 +103,8 @@ func InitTracer(ctx context.Context, cfg Config) (shutdown func(context.Context)
 		if err != nil {
 			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("unknown exporter type: %q (valid: %s, %s, %s)", cfg.Exporter, ExporterOTLP, ExporterStdout, ExporterNoop)
 	}
 
 	// Create trace provider with the exporter
