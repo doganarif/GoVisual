@@ -124,7 +124,14 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	// Initialize OpenTelemetry if enabled
 	if config.EnableOpenTelemetry {
 		ctx := context.Background()
-		shutdown, err := telemetry.InitTracer(ctx, config.ServiceName, config.ServiceVersion, config.OTelEndpoint)
+		otelConfig := telemetry.Config{
+			ServiceName:    config.ServiceName,
+			ServiceVersion: config.ServiceVersion,
+			Endpoint:       config.OTelEndpoint,
+			Insecure:       config.OTelInsecure,
+			Exporter:       config.OTelExporter,
+		}
+		shutdown, err := telemetry.InitTracer(ctx, otelConfig)
 		if err != nil {
 			log.Printf("Failed to initialize OpenTelemetry: %v", err)
 		} else {

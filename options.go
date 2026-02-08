@@ -31,6 +31,10 @@ type Config struct {
 
 	OTelEndpoint string
 
+	OTelInsecure bool
+
+	OTelExporter string
+
 	// Storage configuration
 	StorageType store.StorageType
 
@@ -119,6 +123,21 @@ func WithServiceVersion(version string) Option {
 func WithOTelEndpoint(endpoint string) Option {
 	return func(c *Config) {
 		c.OTelEndpoint = endpoint
+	}
+}
+
+// WithOTelInsecure sets whether to use an insecure connection for OTLP
+func WithOTelInsecure(insecure bool) Option {
+	return func(c *Config) {
+		c.OTelInsecure = insecure
+	}
+}
+
+// WithOTelExporter sets the type of exporter to use.
+// Valid values: "otlp" (default), "stdout" (for debugging), "noop" (for benchmarking)
+func WithOTelExporter(exporterType string) Option {
+	return func(c *Config) {
+		c.OTelExporter = exporterType
 	}
 }
 
@@ -241,6 +260,8 @@ func defaultConfig() *Config {
 		ServiceName:         "govisual",
 		ServiceVersion:      "dev",
 		OTelEndpoint:        "localhost:4317",
+		OTelInsecure:        true,
+		OTelExporter:        "otlp",
 		StorageType:         store.StorageTypeMemory,
 		TableName:           "govisual_requests",
 		RedisTTL:            86400, // 24 hours
