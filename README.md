@@ -2,6 +2,13 @@
 
 A lightweight, zero-configuration HTTP request visualizer and debugger for Go web applications during local development.
 
+### Featured In
+
+- [**Applied Go Weekly**](https://newsletter.appliedgo.net/archive/2025-05-11-tuppers-formula/) — May 2025
+- [**GDG Berlin Golang Meetup**](https://www.youtube.com/watch?v=5ZbpWDnYxLM) — Talk: "Building GoVisual: Zero-Config HTTP Debugging in Go" (Jan 2026)
+- [**Hacker News**](https://news.ycombinator.com/front?day=2025-05-04) — Show HN front page
+- [**Golang Weekly (X)**](https://x.com/golangch/status/1918925327843422248) — 9,100+ impressions
+
 ## Features
 
 - **Real-time Request Monitoring**: Visualize HTTP requests passing through your application
