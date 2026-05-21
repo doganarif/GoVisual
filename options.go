@@ -1,8 +1,11 @@
 package govisual
 
 import (
+	"context"
+	"crypto/subtle"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -10,6 +13,11 @@ import (
 	"github.com/doganarif/govisual/internal/profiling"
 	"github.com/doganarif/govisual/internal/store"
 )
+
+// DashboardAuth authorizes a request to the dashboard. Return true to allow,
+// false to deny (govisual sends an HTTP 401). Implementations should be
+// constant-time when comparing secrets.
+type DashboardAuth func(r *http.Request) bool
 
 type Config struct {
 	MaxRequests int
@@ -19,6 +27,11 @@ type Config struct {
 	LogRequestBody bool
 
 	LogResponseBody bool
+
+	// MaxBodyBytes caps the captured request and response body size.
+	// 0 (default) means use middleware.DefaultMaxBodyBytes (1 MiB).
+	// Set to -1 to disable the cap entirely (NOT recommended).
+	MaxBodyBytes int
 
 	IgnorePaths []string
 
@@ -58,6 +71,41 @@ type Config struct {
 	ProfileThreshold time.Duration
 
 	MaxProfileMetrics int
+
+	// Dashboard security ----------------------------------------------------
+
+	// DashboardAuth, if set, must approve every request to the dashboard.
+	// If nil, the dashboard is fully open — only safe for local dev.
+	DashboardAuth DashboardAuth
+
+	// LocalhostOnly, when true, rejects dashboard requests whose remote address
+	// is not a loopback IP. This is the safest default for "I'm just debugging
+	// locally" — even with the rest of the server bound to 0.0.0.0.
+	LocalhostOnly bool
+
+	// EnableReplay enables the POST /__viz/api/replay endpoint, which lets the
+	// dashboard fire arbitrary HTTP requests from the server. Disabled by
+	// default because it is a powerful SSRF primitive if the dashboard is
+	// reachable by an attacker.
+	EnableReplay bool
+
+	// ExposeSystemInfo controls whether the GET /__viz/api/system-info endpoint
+	// is enabled. Disabled by default; enabling exposes runtime info (hostname,
+	// Go version, memory stats).
+	ExposeSystemInfo bool
+
+	// ExposeEnvVars is an explicit allowlist of environment variable names that
+	// the system-info endpoint may surface. Anything not in this set is omitted
+	// entirely (NOT redacted) so an attacker cannot infer the existence of a
+	// sensitive name.
+	ExposeEnvVars []string
+
+	// ShutdownContext, if set, triggers graceful shutdown of govisual-owned
+	// resources (storage backends, OpenTelemetry tracer provider) when the
+	// context is cancelled. This replaces the prior behavior of registering a
+	// global signal handler that called os.Exit — a library has no business
+	// killing the host process.
+	ShutdownContext context.Context
 }
 
 // Option is a function that modifies the configuration
@@ -88,6 +136,17 @@ func WithRequestBodyLogging(enabled bool) Option {
 func WithResponseBodyLogging(enabled bool) Option {
 	return func(c *Config) {
 		c.LogResponseBody = enabled
+	}
+}
+
+// WithMaxBodyBytes caps the captured request and response body size.
+// Values:
+//   - 0: use the package default (1 MiB)
+//   - >0: explicit cap in bytes
+//   - <0: disable cap (unbounded — be careful with large downloads)
+func WithMaxBodyBytes(n int) Option {
+	return func(c *Config) {
+		c.MaxBodyBytes = n
 	}
 }
 
@@ -193,30 +252,25 @@ func WithMongoDBStorage(uri, databaseName, collectionName string) Option {
 	}
 }
 
-// ShouldIgnorePath checks if a path should be ignored based on the configured patterns
-// ShouldIgnorePath checks if a path should be ignored based on the configured patterns
+// ShouldIgnorePath checks if a path should be ignored based on the configured patterns.
 func (c *Config) ShouldIgnorePath(path string) bool {
-	// First check if it's the dashboard path which should always be ignored to prevent recursive logging
+	// The dashboard itself must always be ignored, otherwise opening it
+	// would recursively log every poll.
 	if path == c.DashboardPath || strings.HasPrefix(path, c.DashboardPath+"/") {
 		return true
 	}
 
-	// Then check against provided ignore patterns
 	for _, pattern := range c.IgnorePaths {
-		matched, err := filepath.Match(pattern, path)
-		if err == nil && matched {
+		if matched, err := filepath.Match(pattern, path); err == nil && matched {
 			return true
 		}
-
-		// Special handling for path groups with trailing slash
+		// Trailing-slash patterns are treated as "prefix match".
 		if len(pattern) > 0 && pattern[len(pattern)-1] == '/' {
-			// If pattern ends with /, check if path starts with pattern
-			if len(path) >= len(pattern) && path[:len(pattern)] == pattern {
+			if strings.HasPrefix(path, pattern) {
 				return true
 			}
 		}
 	}
-
 	return false
 }
 
@@ -248,6 +302,78 @@ func WithMaxProfileMetrics(max int) Option {
 	}
 }
 
+// WithDashboardAuth installs a custom authentication function for the dashboard.
+// The function runs on every dashboard request and must return true to allow access.
+func WithDashboardAuth(fn DashboardAuth) Option {
+	return func(c *Config) {
+		c.DashboardAuth = fn
+	}
+}
+
+// WithBasicAuth protects the dashboard with HTTP Basic Auth using a constant-time
+// comparison. Both username and password are required.
+func WithBasicAuth(username, password string) Option {
+	expectedUser := []byte(username)
+	expectedPass := []byte(password)
+	return func(c *Config) {
+		c.DashboardAuth = func(r *http.Request) bool {
+			user, pass, ok := r.BasicAuth()
+			if !ok {
+				return false
+			}
+			userOK := subtle.ConstantTimeCompare([]byte(user), expectedUser) == 1
+			passOK := subtle.ConstantTimeCompare([]byte(pass), expectedPass) == 1
+			return userOK && passOK
+		}
+	}
+}
+
+// WithLocalhostOnly restricts the dashboard to requests originating from a
+// loopback address. Combine with WithDashboardAuth/WithBasicAuth for defense
+// in depth.
+func WithLocalhostOnly() Option {
+	return func(c *Config) {
+		c.LocalhostOnly = true
+	}
+}
+
+// WithReplayEnabled enables the dashboard's /api/replay endpoint. Disabled by
+// default because the endpoint, if reachable, lets a caller make the server
+// perform arbitrary outbound HTTP requests (an SSRF primitive). Only enable
+// behind authentication and/or localhost-only access.
+func WithReplayEnabled(enabled bool) Option {
+	return func(c *Config) {
+		c.EnableReplay = enabled
+	}
+}
+
+// WithSystemInfo enables the dashboard's /api/system-info endpoint and
+// optionally sets the allowlist of environment variable names to expose.
+// Pass no names to enable the endpoint but expose nothing (memory/runtime
+// info only).
+func WithSystemInfo(envAllowlist ...string) Option {
+	return func(c *Config) {
+		c.ExposeSystemInfo = true
+		c.ExposeEnvVars = append(c.ExposeEnvVars, envAllowlist...)
+	}
+}
+
+// WithShutdownContext wires govisual's internal cleanup (storage backends,
+// OpenTelemetry shutdown) to a caller-provided context. When the context is
+// cancelled, govisual releases its resources. Replaces the prior behavior of
+// installing a global signal handler that called os.Exit.
+//
+// Note: govisual spawns one goroutine that blocks on ctx.Done() for the
+// lifetime of the wrapped handler. If you never cancel the context (for
+// example, by passing context.Background()), that goroutine is retained for
+// the process lifetime — harmless in long-running services, but tests should
+// pass a cancellable context (e.g. t.Context()) to avoid leaks across cases.
+func WithShutdownContext(ctx context.Context) Option {
+	return func(c *Config) {
+		c.ShutdownContext = ctx
+	}
+}
+
 // defaultConfig returns the default configuration
 func defaultConfig() *Config {
 	return &Config{
@@ -255,6 +381,7 @@ func defaultConfig() *Config {
 		DashboardPath:       "/__viz",
 		LogRequestBody:      false,
 		LogResponseBody:     false,
+		MaxBodyBytes:        0, // 0 => use middleware.DefaultMaxBodyBytes
 		IgnorePaths:         []string{},
 		EnableOpenTelemetry: false,
 		ServiceName:         "govisual",
@@ -269,5 +396,7 @@ func defaultConfig() *Config {
 		ProfileType:         profiling.ProfileAll,
 		ProfileThreshold:    10 * time.Millisecond,
 		MaxProfileMetrics:   1000,
+		EnableReplay:        false,
+		ExposeSystemInfo:    false,
 	}
 }

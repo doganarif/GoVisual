@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync/atomic"
+	"time"
 
 	"github.com/doganarif/govisual/internal/model"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -14,10 +16,10 @@ import (
 
 // MongoDBStore implements the Store interface with MongoDB as backend
 type MongoDBStore struct {
-	database   *mongo.Database
-	collection *mongo.Collection
-	capacity   int
-	ctx        context.Context
+	database    *mongo.Database
+	collection  *mongo.Collection
+	capacity    int
+	insertCount atomic.Uint64
 }
 
 // NewMongoDBStore creates a new MongoDB-backend store
@@ -26,172 +28,176 @@ func NewMongoDBStore(uri, databaseName, collectionName string, capacity int) (*M
 		capacity = 100
 	}
 
-	ctx := context.Background()
+	connectCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	client, err := mongo.Connect(options.Client().ApplyURI(uri))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get MongoDB client: %w", err)
 	}
 
-	// Test the connection
-	if err := client.Ping(ctx, readpref.Nearest()); err != nil {
+	if err := client.Ping(connectCtx, readpref.Nearest()); err != nil {
+		_ = client.Disconnect(connectCtx)
 		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
 	}
 
 	database := client.Database(databaseName)
 	collection := database.Collection(collectionName)
 
-	// Create index on timestamp for faster retrieval
 	indexName := fmt.Sprintf("%s_timestamp_idx", collectionName)
 	indexModel := mongo.IndexModel{
-		Keys:    bson.M{"Timestamp": -1},
+		Keys:    bson.D{{Key: "timestamp", Value: -1}},
 		Options: options.Index().SetName(indexName),
 	}
-
-	_, err = collection.Indexes().CreateOne(ctx, indexModel)
-	if err != nil {
+	if _, err := collection.Indexes().CreateOne(connectCtx, indexModel); err != nil {
+		_ = client.Disconnect(connectCtx)
 		return nil, fmt.Errorf("failed to create index in MongoDB: %w", err)
 	}
+
 	return &MongoDBStore{
 		database:   database,
 		collection: collection,
 		capacity:   capacity,
-		ctx:        ctx,
 	}, nil
 }
 
-// Add adds a new request log to the store
-func (m *MongoDBStore) Add(reqLog *model.RequestLog) {
-	// Store log in MongoDB
-	if _, err := m.collection.InsertOne(m.ctx, reqLog); err != nil {
-		log.Printf("Failed to store log in MongoDB: %v", err)
-		return
-	}
-	m.cleanup()
+func (m *MongoDBStore) opCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
-// cleanup removes old logs to maintain the capacity limit
+func (m *MongoDBStore) Add(reqLog *model.RequestLog) error {
+	ctx, cancel := m.opCtx()
+	defer cancel()
+
+	if _, err := m.collection.InsertOne(ctx, reqLog); err != nil {
+		return fmt.Errorf("mongodb insert: %w", err)
+	}
+	if m.insertCount.Add(1)%cleanupEveryN == 0 {
+		m.cleanup()
+	}
+	return nil
+}
+
 func (m *MongoDBStore) cleanup() {
-	count, err := m.collection.CountDocuments(m.ctx, bson.M{})
+	ctx, cancel := m.opCtx()
+	defer cancel()
+
+	count, err := m.collection.CountDocuments(ctx, bson.M{})
 	if err != nil {
-		log.Printf("Failed to get the log count in MongoDB: %v", err)
+		log.Printf("govisual: failed to count MongoDB logs: %v", err)
 		return
 	}
-
 	if count <= int64(m.capacity) {
 		return
 	}
-	// Find the oldest logs that exceed capacity
-	findOptions := options.Find().
-		SetSort(bson.D{{Key: "Timestamp", Value: 1}}).
-		SetLimit(count - int64(m.capacity))
 
-	cursor, err := m.collection.Find(m.ctx, bson.M{}, findOptions)
+	findOptions := options.Find().
+		SetSort(bson.D{{Key: "timestamp", Value: 1}}).
+		SetLimit(count - int64(m.capacity)).
+		SetProjection(bson.M{"_id": 1})
+
+	cursor, err := m.collection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
-		log.Printf("Failed to find oldest logs in MongoDB: %v", err)
+		log.Printf("govisual: failed to find oldest MongoDB logs: %v", err)
 		return
 	}
-	defer cursor.Close(m.ctx)
+	defer cursor.Close(ctx)
 
-	var oldestLogs []model.RequestLog
-	for cursor.Next(m.ctx) {
-		var reqLog model.RequestLog
-		if err := cursor.Decode(&reqLog); err != nil {
-			log.Printf("Failed to decode oldest log in MongoDB: %v", err)
+	var ids []string
+	for cursor.Next(ctx) {
+		var doc struct {
+			ID string `bson:"_id"`
+		}
+		if err := cursor.Decode(&doc); err != nil {
+			log.Printf("govisual: failed to decode oldest MongoDB log: %v", err)
 			continue
 		}
-		oldestLogs = append(oldestLogs, reqLog)
+		ids = append(ids, doc.ID)
 	}
-
-	if len(oldestLogs) == 0 {
+	if len(ids) == 0 {
 		return
 	}
 
-	// Extract IDs of logs to delete
-	var ids []string
-	for _, log := range oldestLogs {
-		ids = append(ids, log.ID)
-	}
-
-	// Delete the oldest logs
-	if _, err := m.collection.DeleteMany(m.ctx, bson.M{"_id": bson.M{"$in": ids}}); err != nil {
-		log.Printf("Failed to delete oldest logs in MongoDB: %v", err)
-		return
+	if _, err := m.collection.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}}); err != nil {
+		log.Printf("govisual: failed to delete oldest MongoDB logs: %v", err)
 	}
 }
 
-// Get retrieves a specific request log by its ID
 func (m *MongoDBStore) Get(id string) (*model.RequestLog, bool) {
+	ctx, cancel := m.opCtx()
+	defer cancel()
+
 	var reqLog model.RequestLog
-	if err := m.collection.FindOne(m.ctx, bson.M{"_id": id}).Decode(&reqLog); err != nil {
+	if err := m.collection.FindOne(ctx, bson.M{"_id": id}).Decode(&reqLog); err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, false
 		}
-		log.Printf("Failed to get request log from MongoDB: %v", err)
+		log.Printf("govisual: failed to get MongoDB log: %v", err)
 		return nil, false
 	}
 	return &reqLog, true
 }
 
-// GetAll returns all stored request logs
 func (m *MongoDBStore) GetAll() []*model.RequestLog {
-	opts := options.Find().SetSort(bson.M{"Timestamp": -1})
-	cursor, err := m.collection.Find(m.ctx, bson.M{}, opts)
+	ctx, cancel := m.opCtx()
+	defer cancel()
+
+	opts := options.Find().SetSort(bson.D{{Key: "timestamp", Value: -1}})
+	cursor, err := m.collection.Find(ctx, bson.M{}, opts)
 	if err != nil {
-		if err == mongo.ErrClientDisconnected {
-			return nil
-		}
-		log.Printf("Failed to get cursor from MongoDB: %v", err)
+		log.Printf("govisual: failed to query MongoDB: %v", err)
 		return nil
 	}
-	defer cursor.Close(m.ctx)
-	reqsLog := make([]*model.RequestLog, 0)
-	for cursor.Next(m.ctx) {
+	defer cursor.Close(ctx)
+
+	out := make([]*model.RequestLog, 0)
+	for cursor.Next(ctx) {
 		var reqLog model.RequestLog
 		if err := cursor.Decode(&reqLog); err != nil {
-			log.Printf("Failed to decode request log from MongoDB: %v", err)
+			log.Printf("govisual: failed to decode MongoDB log: %v", err)
 			continue
 		}
-		reqsLog = append(reqsLog, &reqLog)
+		out = append(out, &reqLog)
 	}
-	return reqsLog
+	return out
 }
 
-// GetLatest returns the n most recent request logs
 func (m *MongoDBStore) GetLatest(n int) []*model.RequestLog {
-	// Get the n newest log IDs
-	opts := options.Find().SetLimit(int64(n)).SetSort(bson.M{"timestamp": -1})
-	cursor, err := m.collection.Find(m.ctx, bson.M{}, opts)
+	ctx, cancel := m.opCtx()
+	defer cancel()
+
+	opts := options.Find().SetLimit(int64(n)).SetSort(bson.D{{Key: "timestamp", Value: -1}})
+	cursor, err := m.collection.Find(ctx, bson.M{}, opts)
 	if err != nil {
-		if err == mongo.ErrClientDisconnected {
-			return nil
-		}
-		log.Printf("Failed to get cursor from MongoDB: %v", err)
+		log.Printf("govisual: failed to query MongoDB: %v", err)
 		return nil
 	}
-	defer cursor.Close(m.ctx)
-	reqsLog := make([]*model.RequestLog, 0)
-	for cursor.Next(m.ctx) {
+	defer cursor.Close(ctx)
+
+	out := make([]*model.RequestLog, 0)
+	for cursor.Next(ctx) {
 		var reqLog model.RequestLog
 		if err := cursor.Decode(&reqLog); err != nil {
-			log.Printf("Failed to decode request log from MongoDB: %v", err)
+			log.Printf("govisual: failed to decode MongoDB log: %v", err)
 			continue
 		}
-		reqsLog = append(reqsLog, &reqLog)
+		out = append(out, &reqLog)
 	}
-
-	return reqsLog
+	return out
 }
 
-// Clear removes all logs from the store
 func (m *MongoDBStore) Clear() error {
-	_, err := m.collection.DeleteMany(m.ctx, bson.M{})
-	if err != nil {
-		return fmt.Errorf("failed to clear logs in MongoDB: %w", err)
+	ctx, cancel := m.opCtx()
+	defer cancel()
+
+	if _, err := m.collection.DeleteMany(ctx, bson.M{}); err != nil {
+		return fmt.Errorf("failed to clear MongoDB logs: %w", err)
 	}
 	return nil
 }
 
-// Close closes the database connection
 func (m *MongoDBStore) Close() error {
-	return m.database.Client().Disconnect(m.ctx)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return m.database.Client().Disconnect(ctx)
 }

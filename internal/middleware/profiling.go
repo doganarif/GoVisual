@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"time"
@@ -20,19 +19,21 @@ type ProfilingConfig struct {
 	CaptureTraces bool
 }
 
-// WrapWithProfiling wraps an http.Handler with request visualization and performance profiling
+// WrapWithProfiling wraps an http.Handler with request visualization and performance profiling.
 func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler) http.Handler {
+	return WrapWithProfilingAndLimits(handler, store, logRequestBody, logResponseBody, pathMatcher, profiler, DefaultMaxBodyBytes)
+}
+
+// WrapWithProfilingAndLimits is identical to WrapWithProfiling but exposes the captured-body size cap.
+func WrapWithProfilingAndLimits(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
 			handler.ServeHTTP(w, r)
 			return
 		}
 
-		// Create a new request log
 		reqLog := model.NewRequestLog(r)
 
-		// Create request tracer
 		tracer := NewRequestTracer(reqLog.ID)
 		tracer.StartTrace("Request Handler", "handler", map[string]interface{}{
 			"method": r.Method,
@@ -40,66 +41,50 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 			"query":  r.URL.RawQuery,
 		})
 
-		// Start profiling
 		ctx := r.Context()
 		ctx = WithTracer(ctx, tracer)
+		// Register the tracer as a TracerSink so the profiler forwards SQL/HTTP
+		// events into the tracer's child traces.
+		ctx = profiling.WithTracerSink(ctx, tracer)
 
 		if profiler != nil {
 			ctx = profiler.StartProfiling(ctx, reqLog.ID)
-
-			// Hook profiler to tracer
-			profiler.SetTracer(ctx, tracer)
 		}
 		r = r.WithContext(ctx)
 
-		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {
-			bodyBytes, _ := io.ReadAll(r.Body)
+			bodyBytes, _, err := readBodyCapped(r.Body, maxBody)
 			r.Body.Close()
-			reqLog.RequestBody = string(bodyBytes)
+			if err == nil {
+				reqLog.RequestBody = string(bodyBytes)
+			}
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
-		// Create response writer wrapper with profiling support
-		resWriter := &profilingResponseWriter{
-			responseWriter: &responseWriter{
-				ResponseWriter: w,
-				statusCode:     200,
-				buffer:         nil,
-			},
-			profiler: profiler,
-			ctx:      ctx,
+		resWriter := &responseWriter{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			maxBody:        maxBody,
 		}
-
 		if logResponseBody {
-			resWriter.responseWriter.buffer = &bytes.Buffer{}
+			resWriter.buffer = &bytes.Buffer{}
 		}
 
-		// Record start time
 		start := time.Now()
-
-		// Call the handler
 		handler.ServeHTTP(resWriter, r)
+		reqLog.Duration = time.Since(start).Milliseconds()
 
-		// Calculate duration
-		duration := time.Since(start)
-		reqLog.Duration = duration.Milliseconds()
-
-		// End profiling and get metrics
 		if profiler != nil {
 			if metrics := profiler.EndProfiling(ctx); metrics != nil {
 				reqLog.PerformanceMetrics = metrics
 			}
 		}
 
-		// Capture response info
-		reqLog.StatusCode = resWriter.responseWriter.statusCode
+		reqLog.StatusCode = resWriter.statusCode
 
-		// Complete the tracer
 		tracer.EndTrace(nil)
 		tracer.Complete()
 
-		// Store traces in request log
 		reqLog.MiddlewareTrace = make([]map[string]interface{}, 0)
 		for _, trace := range tracer.GetTraces() {
 			traceMap := map[string]interface{}{
@@ -118,61 +103,20 @@ func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, 
 			reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, traceMap)
 		}
 
-		// Extract additional middleware information from context
-		if middlewareValue := r.Context().Value("middleware"); middlewareValue != nil {
-			if middlewareInfo, ok := middlewareValue.(map[string]interface{}); ok {
+		if v := r.Context().Value(MiddlewareStackKey{}); v != nil {
+			if middlewareInfo, ok := v.(map[string]interface{}); ok {
 				if stack, ok := middlewareInfo["stack"].([]map[string]interface{}); ok {
-					// Merge with existing traces
-					for _, item := range stack {
-						reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, item)
-					}
+					reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, stack...)
 				}
 			}
 		}
 
-		// Capture response body if enabled
-		if logResponseBody && resWriter.responseWriter.buffer != nil {
-			reqLog.ResponseBody = resWriter.responseWriter.buffer.String()
+		if logResponseBody && resWriter.buffer != nil {
+			reqLog.ResponseBody = resWriter.buffer.String()
 		}
 
-		// Store the request log
-		store.Add(reqLog)
+		_ = store.Add(reqLog)
 	})
-}
-
-// profilingResponseWriter extends responseWriter with profiling capabilities
-type profilingResponseWriter struct {
-	responseWriter *responseWriter
-	profiler       *profiling.Profiler
-	ctx            context.Context
-}
-
-func (w *profilingResponseWriter) Header() http.Header {
-	return w.responseWriter.Header()
-}
-
-func (w *profilingResponseWriter) WriteHeader(code int) {
-	w.responseWriter.WriteHeader(code)
-}
-
-func (w *profilingResponseWriter) Write(b []byte) (int, error) {
-	// Profile the write operation if significant
-	if w.profiler != nil && len(b) > 1024 { // Only profile writes larger than 1KB
-		return w.profileWrite(b)
-	}
-	return w.responseWriter.Write(b)
-}
-
-func (w *profilingResponseWriter) profileWrite(b []byte) (int, error) {
-	var n int
-	var err error
-
-	w.profiler.RecordFunction(w.ctx, "response.Write", func() error {
-		n, err = w.responseWriter.Write(b)
-		return err
-	})
-
-	return n, err
 }
 
 // HTTPRoundTripper is a profiling HTTP round tripper for outgoing requests
@@ -183,25 +127,19 @@ type HTTPRoundTripper struct {
 
 // RoundTrip implements http.RoundTripper with profiling
 func (rt *HTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if rt.Profiler == nil {
-		if rt.Transport != nil {
-			return rt.Transport.RoundTrip(req)
-		}
-		return http.DefaultTransport.RoundTrip(req)
-	}
-
-	start := time.Now()
-
 	transport := rt.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
 
-	resp, err := transport.RoundTrip(req)
+	if rt.Profiler == nil {
+		return transport.RoundTrip(req)
+	}
 
+	start := time.Now()
+	resp, err := transport.RoundTrip(req)
 	duration := time.Since(start)
 
-	// Record the HTTP call metrics
 	if resp != nil {
 		size := resp.ContentLength
 		if size < 0 {
@@ -211,7 +149,6 @@ func (rt *HTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	} else {
 		rt.Profiler.RecordHTTPCall(req.Context(), req.Method, req.URL.String(), duration, 0, 0)
 	}
-
 	return resp, err
 }
 

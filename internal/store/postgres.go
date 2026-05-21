@@ -5,16 +5,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync/atomic"
 
 	"github.com/doganarif/govisual/internal/model"
 	_ "github.com/lib/pq"
 )
 
+// cleanupEveryN runs the capacity-trim query once every N successful inserts,
+// instead of on every Add. Trading a slight overshoot of the configured capacity
+// for far less load on the database.
+const cleanupEveryN = 32
+
 // PostgresStore implements the Store interface with PostgreSQL as backend
 type PostgresStore struct {
-	db        *sql.DB
-	tableName string
-	capacity  int
+	db          *sql.DB
+	tableName   string
+	capacity    int
+	insertCount atomic.Uint64
 }
 
 // NewPostgresStore creates a new PostgreSQL-backed store
@@ -23,33 +30,34 @@ func NewPostgresStore(connStr, tableName string, capacity int) (*PostgresStore, 
 		capacity = 100
 	}
 
-	// Connect to the database
+	if !IsValidTableName(tableName) {
+		return nil, fmt.Errorf("invalid table name %q: must match [A-Za-z_][A-Za-z0-9_]*", tableName)
+	}
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to PostgreSQL: %w", err)
 	}
 
-	// Test the connection
 	if err := db.Ping(); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
 	}
 
-	store := &PostgresStore{
+	s := &PostgresStore{
 		db:        db,
 		tableName: tableName,
 		capacity:  capacity,
 	}
 
-	// Create the table if it doesn't exist
-	if err := store.createTable(); err != nil {
+	if err := s.createTable(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	return store, nil
+	return s, nil
 }
 
-// createTable creates the required table if it doesn't exist
 func (s *PostgresStore) createTable() error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -71,26 +79,21 @@ func (s *PostgresStore) createTable() error {
 		)
 	`, s.tableName)
 
-	_, err := s.db.Exec(query)
-	if err != nil {
+	if _, err := s.db.Exec(query); err != nil {
 		return err
 	}
 
-	// Create index on timestamp for faster retrieval
 	indexQuery := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_timestamp_idx ON %s (timestamp DESC)",
 		s.tableName, s.tableName)
-	_, err = s.db.Exec(indexQuery)
-
+	_, err := s.db.Exec(indexQuery)
 	return err
 }
 
 // Add adds a new request log to the store
-func (s *PostgresStore) Add(reqLog *model.RequestLog) {
-	// Prepare all JSON fields properly
+func (s *PostgresStore) Add(reqLog *model.RequestLog) error {
 	reqHeaders := prepareJSON(reqLog.RequestHeaders)
 	respHeaders := prepareJSON(reqLog.ResponseHeaders)
 
-	// Default to empty arrays/objects for JSON fields if they're nil or empty
 	middlewareTrace := "[]"
 	if len(reqLog.MiddlewareTrace) > 0 {
 		if data, err := json.Marshal(reqLog.MiddlewareTrace); err == nil {
@@ -105,11 +108,10 @@ func (s *PostgresStore) Add(reqLog *model.RequestLog) {
 		}
 	}
 
-	// Insert the log using string interpolation for JSON fields to avoid issues with parameter binding
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
 			id, timestamp, method, path, query, request_headers, response_headers,
-			status_code, duration, request_body, response_body, error, 
+			status_code, duration, request_body, response_body, error,
 			middleware_trace, route_trace
 		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
 	`, s.tableName)
@@ -131,13 +133,14 @@ func (s *PostgresStore) Add(reqLog *model.RequestLog) {
 		middlewareTrace,
 		routeTrace,
 	)
-
 	if err != nil {
-		log.Printf("Failed to store request log in PostgreSQL: %v", err)
+		return fmt.Errorf("postgres insert: %w", err)
 	}
 
-	// Clean up old logs
-	s.cleanup()
+	if s.insertCount.Add(1)%cleanupEveryN == 0 {
+		s.cleanup()
+	}
+	return nil
 }
 
 // prepareJSON ensures we have a valid JSON string
@@ -145,13 +148,11 @@ func prepareJSON(v interface{}) string {
 	if v == nil {
 		return "{}"
 	}
-
 	data, err := json.Marshal(v)
 	if err != nil {
-		log.Printf("Failed to marshal JSON: %v", err)
+		log.Printf("govisual: failed to marshal JSON: %v", err)
 		return "{}"
 	}
-
 	return string(data)
 }
 
@@ -159,17 +160,14 @@ func prepareJSON(v interface{}) string {
 func (s *PostgresStore) cleanup() {
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.tableName)
 	var count int
-	err := s.db.QueryRow(countQuery).Scan(&count)
-	if err != nil {
-		log.Printf("Failed to count logs: %v", err)
+	if err := s.db.QueryRow(countQuery).Scan(&count); err != nil {
+		log.Printf("govisual: failed to count logs: %v", err)
 		return
 	}
-
 	if count <= s.capacity {
 		return
 	}
 
-	// Delete oldest logs
 	deleteQuery := fmt.Sprintf(`
 		DELETE FROM %s
 		WHERE id IN (
@@ -179,20 +177,19 @@ func (s *PostgresStore) cleanup() {
 		)
 	`, s.tableName, s.tableName)
 
-	_, err = s.db.Exec(deleteQuery, count-s.capacity)
-	if err != nil {
-		log.Printf("Failed to clean up old logs: %v", err)
+	if _, err := s.db.Exec(deleteQuery, count-s.capacity); err != nil {
+		log.Printf("govisual: failed to clean up old logs: %v", err)
 	}
 }
 
 // Get retrieves a specific request log by its ID
 func (s *PostgresStore) Get(id string) (*model.RequestLog, bool) {
 	query := fmt.Sprintf(`
-		SELECT 
-			id, timestamp, method, path, query, 
+		SELECT
+			id, timestamp, method, path, query,
 			COALESCE(request_headers::text, '{}'),
 			COALESCE(response_headers::text, '{}'),
-			status_code, duration, request_body, response_body, error, 
+			status_code, duration, request_body, response_body, error,
 			COALESCE(middleware_trace::text, '[]'),
 			COALESCE(route_trace::text, '{}')
 		FROM %s
@@ -223,20 +220,18 @@ func (s *PostgresStore) Get(id string) (*model.RequestLog, bool) {
 		&middlewareTrace,
 		&routeTrace,
 	)
-
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, false
 		}
-		log.Printf("Failed to get request log from PostgreSQL: %v", err)
+		log.Printf("govisual: failed to get request log from PostgreSQL: %v", err)
 		return nil, false
 	}
 
-	// Unmarshal all JSON fields
-	json.Unmarshal([]byte(reqHeadersStr), &reqLog.RequestHeaders)
-	json.Unmarshal([]byte(respHeadersStr), &reqLog.ResponseHeaders)
-	json.Unmarshal([]byte(middlewareTrace), &reqLog.MiddlewareTrace)
-	json.Unmarshal([]byte(routeTrace), &reqLog.RouteTrace)
+	unmarshalLogJSON(reqHeadersStr, &reqLog.RequestHeaders, "request_headers", reqLog.ID)
+	unmarshalLogJSON(respHeadersStr, &reqLog.ResponseHeaders, "response_headers", reqLog.ID)
+	unmarshalLogJSON(middlewareTrace, &reqLog.MiddlewareTrace, "middleware_trace", reqLog.ID)
+	unmarshalLogJSON(routeTrace, &reqLog.RouteTrace, "route_trace", reqLog.ID)
 
 	return &reqLog, true
 }
@@ -244,11 +239,11 @@ func (s *PostgresStore) Get(id string) (*model.RequestLog, bool) {
 // GetAll returns all stored request logs
 func (s *PostgresStore) GetAll() []*model.RequestLog {
 	query := fmt.Sprintf(`
-		SELECT 
-			id, timestamp, method, path, query, 
+		SELECT
+			id, timestamp, method, path, query,
 			COALESCE(request_headers::text, '{}'),
 			COALESCE(response_headers::text, '{}'),
-			status_code, duration, request_body, response_body, error, 
+			status_code, duration, request_body, response_body, error,
 			COALESCE(middleware_trace::text, '[]'),
 			COALESCE(route_trace::text, '{}')
 		FROM %s
@@ -261,11 +256,11 @@ func (s *PostgresStore) GetAll() []*model.RequestLog {
 // GetLatest returns the n most recent request logs
 func (s *PostgresStore) GetLatest(n int) []*model.RequestLog {
 	query := fmt.Sprintf(`
-		SELECT 
-			id, timestamp, method, path, query, 
+		SELECT
+			id, timestamp, method, path, query,
 			COALESCE(request_headers::text, '{}'),
 			COALESCE(response_headers::text, '{}'),
-			status_code, duration, request_body, response_body, error, 
+			status_code, duration, request_body, response_body, error,
 			COALESCE(middleware_trace::text, '[]'),
 			COALESCE(route_trace::text, '{}')
 		FROM %s
@@ -276,11 +271,10 @@ func (s *PostgresStore) GetLatest(n int) []*model.RequestLog {
 	return s.queryLogs(query, n)
 }
 
-// queryLogs executes a query and returns the resulting log entries
 func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.RequestLog {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		log.Printf("Failed to query logs from PostgreSQL: %v", err)
+		log.Printf("govisual: failed to query logs from PostgreSQL: %v", err)
 		return nil
 	}
 	defer rows.Close()
@@ -296,7 +290,7 @@ func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.Re
 			routeTrace      string
 		)
 
-		err := rows.Scan(
+		if err := rows.Scan(
 			&reqLog.ID,
 			&reqLog.Timestamp,
 			&reqLog.Method,
@@ -311,24 +305,21 @@ func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.Re
 			&reqLog.Error,
 			&middlewareTrace,
 			&routeTrace,
-		)
-
-		if err != nil {
-			log.Printf("Failed to scan row: %v", err)
+		); err != nil {
+			log.Printf("govisual: failed to scan row: %v", err)
 			continue
 		}
 
-		// Unmarshal all JSON fields, ignoring errors
-		json.Unmarshal([]byte(reqHeadersStr), &reqLog.RequestHeaders)
-		json.Unmarshal([]byte(respHeadersStr), &reqLog.ResponseHeaders)
-		json.Unmarshal([]byte(middlewareTrace), &reqLog.MiddlewareTrace)
-		json.Unmarshal([]byte(routeTrace), &reqLog.RouteTrace)
+		unmarshalLogJSON(reqHeadersStr, &reqLog.RequestHeaders, "request_headers", reqLog.ID)
+		unmarshalLogJSON(respHeadersStr, &reqLog.ResponseHeaders, "response_headers", reqLog.ID)
+		unmarshalLogJSON(middlewareTrace, &reqLog.MiddlewareTrace, "middleware_trace", reqLog.ID)
+		unmarshalLogJSON(routeTrace, &reqLog.RouteTrace, "route_trace", reqLog.ID)
 
 		logs = append(logs, &reqLog)
 	}
 
 	if err := rows.Err(); err != nil {
-		log.Printf("Error iterating over rows: %v", err)
+		log.Printf("govisual: error iterating over rows: %v", err)
 	}
 
 	return logs
@@ -337,15 +328,24 @@ func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.Re
 // Clear clears all stored request logs
 func (s *PostgresStore) Clear() error {
 	query := fmt.Sprintf("TRUNCATE TABLE %s", s.tableName)
-	_, err := s.db.Exec(query)
-	if err != nil {
+	if _, err := s.db.Exec(query); err != nil {
 		return fmt.Errorf("failed to clear logs: %w", err)
 	}
-
 	return nil
 }
 
 // Close closes the database connection
 func (s *PostgresStore) Close() error {
 	return s.db.Close()
+}
+
+// unmarshalLogJSON is shared by all SQL stores so they all report unmarshal
+// errors consistently instead of silently dropping fields.
+func unmarshalLogJSON(s string, v interface{}, field, logID string) {
+	if s == "" {
+		return
+	}
+	if err := json.Unmarshal([]byte(s), v); err != nil {
+		log.Printf("govisual: failed to unmarshal %s for log %s: %v", field, logID, err)
+	}
 }

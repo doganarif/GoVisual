@@ -266,17 +266,29 @@ func (rt *RequestTracer) getParentTrace() *TraceEntry {
 	return trace
 }
 
-// Context key for request tracer
-type tracerKey struct{}
+// TracerContextKey is the public context key used to attach a *RequestTracer to a request context.
+// External packages (e.g. internal/profiling) read this key, so it must remain exported.
+type TracerContextKey struct{}
+
+// MiddlewareStackKey is the context key user middleware can write to in order to surface
+// custom middleware-stack information into the dashboard's "middleware trace" view.
+// Expected value type: map[string]interface{} with a "stack" key whose value is
+// []map[string]interface{}.
+type MiddlewareStackKey struct{}
+
+// RouteTraceKey is the context key user middleware can write to in order to attach
+// a JSON-encoded route descriptor to the request log.
+// Expected value type: string (JSON-encoded object).
+type RouteTraceKey struct{}
 
 // WithTracer adds a tracer to the context
 func WithTracer(ctx context.Context, tracer *RequestTracer) context.Context {
-	return context.WithValue(ctx, tracerKey{}, tracer)
+	return context.WithValue(ctx, TracerContextKey{}, tracer)
 }
 
 // GetTracer gets the tracer from context
 func GetTracer(ctx context.Context) *RequestTracer {
-	if tracer, ok := ctx.Value(tracerKey{}).(*RequestTracer); ok {
+	if tracer, ok := ctx.Value(TracerContextKey{}).(*RequestTracer); ok {
 		return tracer
 	}
 	return nil
