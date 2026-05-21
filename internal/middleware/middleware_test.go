@@ -14,8 +14,9 @@ type mockStore struct {
 	logs []*model.RequestLog
 }
 
-func (m *mockStore) Add(log *model.RequestLog) {
+func (m *mockStore) Add(log *model.RequestLog) error {
 	m.logs = append(m.logs, log)
+	return nil
 }
 
 func (m *mockStore) Get(id string) (*model.RequestLog, bool) {

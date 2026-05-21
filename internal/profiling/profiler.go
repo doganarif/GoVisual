@@ -2,6 +2,7 @@ package profiling
 
 import (
 	"bytes"
+	"container/list"
 	"context"
 	"runtime"
 	"runtime/pprof"
@@ -10,25 +11,31 @@ import (
 	"time"
 )
 
-// ProfileType represents the type of profiling to perform
+// ProfileType represents the type of profiling to perform.
+// Values are bitmask flags so multiple types can be OR'd together.
 type ProfileType uint32
 
 const (
 	// ProfileNone disables all profiling
 	ProfileNone ProfileType = 0
 	// ProfileCPU enables CPU profiling
-	ProfileCPU ProfileType = 1 << iota
+	ProfileCPU ProfileType = 1 << 0
 	// ProfileMemory enables memory profiling
-	ProfileMemory
+	ProfileMemory ProfileType = 1 << 1
 	// ProfileGoroutine enables goroutine tracking
-	ProfileGoroutine
+	ProfileGoroutine ProfileType = 1 << 2
 	// ProfileBlocking enables blocking profiling
-	ProfileBlocking
+	ProfileBlocking ProfileType = 1 << 3
 	// ProfileAll enables all profiling types
 	ProfileAll = ProfileCPU | ProfileMemory | ProfileGoroutine | ProfileBlocking
 )
 
-// Metrics contains performance metrics for a request
+// Metrics contains performance metrics for a request.
+//
+// Concurrency: a single request may fan out work across goroutines that each
+// call RecordFunction/RecordSQLQuery/RecordHTTPCall on the same *Metrics. The
+// mu field serializes those mutations. Readers (GetMetrics, JSON encoding,
+// EndProfiling) snapshot under the same mutex.
 type Metrics struct {
 	RequestID        string                   `json:"request_id"`
 	StartTime        time.Time                `json:"start_time"`
@@ -46,6 +53,8 @@ type Metrics struct {
 	Bottlenecks      []Bottleneck             `json:"bottlenecks,omitempty"`
 	CPUProfile       []byte                   `json:"-"` // Raw CPU profile data
 	HeapProfile      []byte                   `json:"-"` // Raw heap profile data
+
+	mu sync.Mutex
 }
 
 // SQLQueryMetric represents metrics for a SQL query
@@ -74,13 +83,21 @@ type Bottleneck struct {
 	Suggestion  string        `json:"suggestion"`
 }
 
-// Profiler handles performance profiling for requests
+// Profiler handles performance profiling for requests.
+//
+// Limitation: CPU profiling uses runtime/pprof.StartCPUProfile which is a
+// process-global sampler. Only one request can be CPU-profiled at a time;
+// concurrent requests that arrive while a profile is in progress will be
+// captured for all other metrics (memory, goroutines, SQL, HTTP) but will
+// not have a CPUProfile attached. This is a fundamental constraint of the
+// Go runtime, not a bug.
 type Profiler struct {
 	enabled          atomic.Bool
 	profileType      atomic.Uint32
 	threshold        time.Duration // Minimum duration to trigger profiling
 	mu               sync.RWMutex
-	metrics          map[string]*Metrics
+	metrics          map[string]*list.Element // requestID -> *list.Element holding *Metrics
+	order            *list.List               // FIFO insertion order of *Metrics
 	maxMetrics       int
 	cpuProfileMu     sync.Mutex         // Protects CPU profiling global state
 	activeCPUProfile *cpuProfileSession // Currently active CPU profile session
@@ -100,7 +117,8 @@ func NewProfiler(maxMetrics int) *Profiler {
 	}
 	p := &Profiler{
 		threshold:  10 * time.Millisecond, // Default threshold
-		metrics:    make(map[string]*Metrics),
+		metrics:    make(map[string]*list.Element),
+		order:      list.New(),
 		maxMetrics: maxMetrics,
 	}
 	p.enabled.Store(true)
@@ -259,7 +277,12 @@ func (p *Profiler) RecordFunction(ctx context.Context, name string, fn func() er
 	err := fn()
 	duration := time.Since(start)
 
+	metrics.mu.Lock()
+	if metrics.FunctionTimings == nil {
+		metrics.FunctionTimings = make(map[string]time.Duration)
+	}
 	metrics.FunctionTimings[name] = duration
+	metrics.mu.Unlock()
 
 	return err
 }
@@ -284,13 +307,12 @@ func (p *Profiler) RecordSQLQuery(ctx context.Context, query string, duration ti
 		metric.Error = err.Error()
 	}
 
+	metrics.mu.Lock()
 	metrics.SQLQueries = append(metrics.SQLQueries, metric)
+	metrics.mu.Unlock()
 
-	// Also record in tracer if available
-	if tracer, ok := ctx.Value(tracerKey{}).(interface {
-		RecordSQL(string, time.Duration, int, error)
-	}); ok {
-		tracer.RecordSQL(query, duration, rows, err)
+	if sink := tracerSinkFromContext(ctx); sink != nil {
+		sink.RecordSQL(query, duration, rows, err)
 	}
 }
 
@@ -305,6 +327,7 @@ func (p *Profiler) RecordHTTPCall(ctx context.Context, method, url string, durat
 		return
 	}
 
+	metrics.mu.Lock()
 	metrics.HTTPCalls = append(metrics.HTTPCalls, HTTPCallMetric{
 		Method:   method,
 		URL:      url,
@@ -312,12 +335,10 @@ func (p *Profiler) RecordHTTPCall(ctx context.Context, method, url string, durat
 		Status:   status,
 		Size:     size,
 	})
+	metrics.mu.Unlock()
 
-	// Also record in tracer if available
-	if tracer, ok := ctx.Value(tracerKey{}).(interface {
-		RecordHTTP(string, string, time.Duration, int, error)
-	}); ok {
-		tracer.RecordHTTP(method, url, duration, status, nil)
+	if sink := tracerSinkFromContext(ctx); sink != nil {
+		sink.RecordHTTP(method, url, duration, status, nil)
 	}
 }
 
@@ -325,18 +346,21 @@ func (p *Profiler) RecordHTTPCall(ctx context.Context, method, url string, durat
 func (p *Profiler) GetMetrics(requestID string) (*Metrics, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	metrics, ok := p.metrics[requestID]
-	return metrics, ok
+	elem, ok := p.metrics[requestID]
+	if !ok {
+		return nil, false
+	}
+	return elem.Value.(*Metrics), true
 }
 
-// GetAllMetrics retrieves all stored metrics
+// GetAllMetrics retrieves all stored metrics in FIFO insertion order (oldest first).
 func (p *Profiler) GetAllMetrics() []*Metrics {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	result := make([]*Metrics, 0, len(p.metrics))
-	for _, m := range p.metrics {
-		result = append(result, m)
+	result := make([]*Metrics, 0, p.order.Len())
+	for e := p.order.Front(); e != nil; e = e.Next() {
+		result = append(result, e.Value.(*Metrics))
 	}
 	return result
 }
@@ -345,7 +369,8 @@ func (p *Profiler) GetAllMetrics() []*Metrics {
 func (p *Profiler) ClearMetrics() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.metrics = make(map[string]*Metrics)
+	p.metrics = make(map[string]*list.Element)
+	p.order = list.New()
 }
 
 // analyzeBottlenecks analyzes metrics to identify bottlenecks
@@ -421,26 +446,63 @@ func (p *Profiler) storeMetrics(requestID string, metrics *Metrics) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Enforce max metrics limit
-	if len(p.metrics) >= p.maxMetrics {
-		// Remove oldest entry (simple FIFO for now)
-		for k := range p.metrics {
-			delete(p.metrics, k)
-			break
-		}
+	// If the same requestID was already stored, replace its entry in place.
+	if existing, ok := p.metrics[requestID]; ok {
+		existing.Value = metrics
+		return
 	}
 
-	p.metrics[requestID] = metrics
+	// Real FIFO eviction: drop the front (oldest) element.
+	for p.order.Len() >= p.maxMetrics {
+		oldest := p.order.Front()
+		if oldest == nil {
+			break
+		}
+		oldMetrics := oldest.Value.(*Metrics)
+		delete(p.metrics, oldMetrics.RequestID)
+		p.order.Remove(oldest)
+	}
+
+	p.metrics[requestID] = p.order.PushBack(metrics)
 }
 
 func (p *Profiler) removeMetrics(requestID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.metrics, requestID)
+	if elem, ok := p.metrics[requestID]; ok {
+		p.order.Remove(elem)
+		delete(p.metrics, requestID)
+	}
 }
 
 type profileContextKey struct{}
-type tracerKey struct{}
+
+// TracerSink is the interface a tracer must implement to receive forwarded
+// SQL and HTTP events recorded through the profiler. The middleware package's
+// RequestTracer satisfies this interface.
+type TracerSink interface {
+	RecordSQL(query string, duration time.Duration, rows int, err error)
+	RecordHTTP(method, url string, duration time.Duration, status int, err error)
+}
+
+type tracerSinkKey struct{}
+
+// WithTracerSink attaches a TracerSink to the context so that calls to
+// Profiler.RecordSQLQuery and Profiler.RecordHTTPCall are also forwarded
+// to the tracer. Returns the new context.
+func WithTracerSink(ctx context.Context, sink TracerSink) context.Context {
+	if sink == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, tracerSinkKey{}, sink)
+}
+
+func tracerSinkFromContext(ctx context.Context) TracerSink {
+	if v, ok := ctx.Value(tracerSinkKey{}).(TracerSink); ok {
+		return v
+	}
+	return nil
+}
 
 // stopCPUProfilingIfActive stops CPU profiling if the given request started it
 func (p *Profiler) stopCPUProfilingIfActive(requestID string) {
@@ -451,20 +513,4 @@ func (p *Profiler) stopCPUProfilingIfActive(requestID string) {
 		pprof.StopCPUProfile()
 		p.activeCPUProfile = nil
 	}
-}
-
-// SetTracer associates a tracer with the profiling context
-func (p *Profiler) SetTracer(ctx context.Context, tracer interface{}) {
-	// Tracer is already in context, no action needed
-	// This method exists for compatibility
-}
-
-// ProfileWriter captures CPU profiles
-type ProfileWriter struct {
-	buf []byte
-}
-
-func (pw *ProfileWriter) Write(p []byte) (n int, err error) {
-	pw.buf = append(pw.buf, p...)
-	return len(p), nil
 }
