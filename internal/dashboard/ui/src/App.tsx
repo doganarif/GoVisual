@@ -1,401 +1,280 @@
-import { h } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { h, Fragment } from "preact";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { api, RequestLog } from "./lib/api";
-import { SimpleSidebar } from "./components/SimpleSidebar";
-import { StatsDashboard } from "./components/StatsDashboard";
-import { RequestTable } from "./components/RequestTable";
-import { RequestDrawer } from "./components/RequestDrawer";
+import { RailNav, View } from "./components/RailNav";
+import { RequestList } from "./components/RequestList";
+import { DetailPane } from "./components/DetailPane";
 import { EnvironmentInfo } from "./components/EnvironmentInfo";
-import { Filters, FilterState } from "./components/Filters";
 import { RequestComparison } from "./components/RequestComparison";
 import { RequestReplay } from "./components/RequestReplay";
-import { RequestTrace } from "./components/RequestTrace";
-import { ExportImport } from "./components/ExportImport";
-import { ResponseTimeChart } from "./components/ResponseTimeChart";
-import { Button } from "./components/ui/button";
-import { cn } from "./lib/utils";
+import { Analytics } from "./components/Analytics";
+
+type StatusFilter = Set<"2xx" | "3xx" | "4xx" | "5xx">;
+
+// Slow threshold (ms): anything at or above this lands in the Slow view.
+// Matches the default profiling threshold on the server (10ms) but bumped to
+// 200ms to be useful as a triage tool rather than a profiler.
+const SLOW_MS = 200;
 
 export function App() {
   const [requests, setRequests] = useState<RequestLog[]>([]);
-  const [filteredRequests, setFilteredRequests] = useState<RequestLog[]>([]);
-  const [selectedRequest, setSelectedRequest] = useState<RequestLog | null>(
-    null
-  );
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [filters, setFilters] = useState<FilterState>({
-    method: "",
-    statusCode: "",
-    path: "",
-    minDuration: "",
-  });
-  const [selectedForComparison, setSelectedForComparison] = useState<string[]>(
-    []
-  );
+  const [view, setView] = useState<View>("inbox");
+  const [selected, setSelected] = useState<RequestLog | null>(null);
+
+  // Search + status filter live at the App level so they persist across view
+  // changes — switching from Inbox to Errors and back shouldn't drop the
+  // user's typed filter.
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(new Set());
+
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const [showComparison, setShowComparison] = useState(false);
-  const [showReplay, setShowReplay] = useState(false);
   const [replayRequest, setReplayRequest] = useState<RequestLog | null>(null);
+  const [live, setLive] = useState(false);
+
+  // Initial fetch + live subscription. The SSE callback uses refs to read the
+  // current filters/selection without resubscribing on every keystroke.
+  const searchRef = useRef(search);
+  const statusFilterRef = useRef(statusFilter);
+  const viewRef = useRef(view);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+  useEffect(() => {
+    statusFilterRef.current = statusFilter;
+  }, [statusFilter]);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   useEffect(() => {
-    // Load initial requests
+    const controller = new AbortController();
     api
-      .getRequests()
-      .then((data) => {
-        setRequests(data);
-        setFilteredRequests(data);
-      })
-      .catch(console.error);
+      .getRequests(controller.signal)
+      .then((data) => setRequests(data))
+      .catch((err) => {
+        if (err?.name !== "AbortError") console.error(err);
+      });
 
-    // Subscribe to live updates
-    const eventSource = api.subscribeToEvents((data) => {
-      setRequests(data);
-      applyFilters(data, filters);
-    });
+    const es = api.subscribeToEvents(
+      (event) => {
+        setLive(true);
+        if (event.kind === "snapshot") {
+          setRequests(event.data);
+          return;
+        }
+        setRequests((prev) => [...event.data, ...prev]);
+      },
+      () => setLive(false)
+    );
 
     return () => {
-      eventSource.close();
+      controller.abort();
+      es.close();
     };
   }, []);
 
-  const applyFilters = (
-    requestList: RequestLog[],
-    filterState: FilterState
-  ) => {
-    let filtered = [...requestList];
-
-    // Filter by method
-    if (filterState.method) {
-      filtered = filtered.filter((r) => r.Method === filterState.method);
+  // Derive the request list for the current view + filters. Memoized so the
+  // expensive filter pass doesn't run on every render.
+  const filtered = useMemo(() => {
+    let out = requests;
+    if (view === "errors") {
+      out = out.filter((r) => r.StatusCode >= 400);
+    } else if (view === "slow") {
+      out = out.filter((r) => r.Duration >= SLOW_MS);
     }
-
-    // Filter by status code
-    if (filterState.statusCode) {
-      const statusPrefix = filterState.statusCode.charAt(0);
-      filtered = filtered.filter((r) => {
-        const statusStr = r.StatusCode.toString();
-        return statusStr.charAt(0) === statusPrefix;
+    if (statusFilter.size > 0) {
+      out = out.filter((r) => {
+        const k = statusKey(r.StatusCode);
+        return k ? statusFilter.has(k) : false;
       });
     }
-
-    // Filter by path
-    if (filterState.path) {
-      const searchPath = filterState.path.toLowerCase();
-      filtered = filtered.filter((r) =>
-        r.Path.toLowerCase().includes(searchPath)
-      );
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      out = out.filter((r) => r.Path.toLowerCase().includes(q));
     }
+    return out;
+  }, [requests, view, statusFilter, search]);
 
-    // Filter by minimum duration
-    if (filterState.minDuration) {
-      const minDur = parseInt(filterState.minDuration);
-      if (!isNaN(minDur)) {
-        filtered = filtered.filter((r) => r.Duration >= minDur);
-      }
+  const errorCount = useMemo(
+    () => requests.filter((r) => r.StatusCode >= 400).length,
+    [requests]
+  );
+
+  // Keep the selected request in sync with the visible list. If the user
+  // switches views and the selected request is filtered out, drop the
+  // selection so the right pane shows the empty state rather than a row
+  // that doesn't appear anywhere.
+  useEffect(() => {
+    if (!selected) return;
+    if (!filtered.some((r) => r.ID === selected.ID)) {
+      setSelected(null);
     }
+  }, [filtered, selected?.ID]);
 
-    setFilteredRequests(filtered);
-  };
-
-  const handleFilterChange = (newFilters: FilterState) => {
-    setFilters(newFilters);
-    applyFilters(requests, newFilters);
-  };
-
-  const handleClearRequests = async () => {
+  const handleClearAll = async () => {
     try {
       await api.clearRequests();
       setRequests([]);
-      setFilteredRequests([]);
-      setSelectedRequest(null);
-      setSelectedForComparison([]);
-    } catch (error) {
-      console.error("Failed to clear requests:", error);
+      setSelected(null);
+      setCompareIds([]);
+    } catch (err) {
+      console.error("Failed to clear requests:", err);
     }
   };
 
-  const handleRequestSelect = (request: RequestLog) => {
-    setSelectedRequest(request);
-    setDrawerOpen(true);
+  const handleCompareToggle = (req: RequestLog) => {
+    setCompareIds((prev) =>
+      prev.includes(req.ID) ? prev.filter((id) => id !== req.ID) : [...prev, req.ID]
+    );
   };
 
-  const handleToggleComparison = (requestId: string) => {
-    setSelectedForComparison((prev) => {
-      if (prev.includes(requestId)) {
-        return prev.filter((id) => id !== requestId);
+  const handleImport = (incoming: RequestLog[]) => {
+    setRequests((prev) => {
+      const merged = [...prev];
+      const seen = new Set(merged.map((r) => r.ID));
+      for (const r of incoming) {
+        if (!seen.has(r.ID)) merged.push(r);
       }
-      return [...prev, requestId];
+      return merged;
     });
   };
 
-  const handleStartComparison = () => {
-    if (selectedForComparison.length >= 2) {
-      setShowComparison(true);
-    }
-  };
-
-  const handleStartReplay = (request: RequestLog) => {
-    setReplayRequest(request);
-    setShowReplay(true);
-  };
-
-  const handleImportRequests = (importedRequests: RequestLog[]) => {
-    const combined = [...requests, ...importedRequests];
-    const uniqueRequests = Array.from(
-      new Map(combined.map((r) => [r.ID, r])).values()
-    );
-    setRequests(uniqueRequests);
-    applyFilters(uniqueRequests, filters);
-  };
-
-  // Calculate stats
-  const calculateStats = () => {
-    const total = requests.length;
-    const success = requests.filter(
-      (r) => r.StatusCode >= 200 && r.StatusCode < 300
-    ).length;
-    const successRate = total > 0 ? Math.round((success / total) * 100) : 0;
-    const avgDuration =
-      total > 0
-        ? Math.round(requests.reduce((sum, r) => sum + r.Duration, 0) / total)
-        : 0;
-
-    return { total, successRate, avgDuration };
-  };
-
-  const stats = calculateStats();
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case "dashboard":
-        return (
-          <div className="space-y-8 animate-in fade-in-50 duration-500">
-            <div className="mb-2">
-              <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-              <p className="text-muted-foreground mt-1">
-                Monitor and analyze HTTP requests in real-time
-              </p>
-            </div>
-
-            <StatsDashboard requests={requests} />
-
-            <Filters
-              onFilterChange={handleFilterChange}
-              onClear={handleClearRequests}
-            />
-
-            <div className="bg-background rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-6 py-4 border-b bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">Recent Requests</h3>
-                  <span className="text-sm text-muted-foreground">
-                    {filteredRequests.length} total requests
-                  </span>
-                </div>
-              </div>
-              <div className="overflow-auto max-h-[500px]">
-                <RequestTable
-                  requests={filteredRequests.slice(0, 50)}
-                  selectedRequest={selectedRequest}
-                  onRequestSelect={handleRequestSelect}
-                />
-              </div>
-            </div>
-          </div>
-        );
-
-      case "requests":
-        return (
-          <div className="space-y-8 animate-in fade-in-50 duration-500">
-            <div className="mb-2">
-              <h1 className="text-3xl font-bold tracking-tight">
-                All Requests
-              </h1>
-              <p className="text-muted-foreground mt-1">
-                View and filter all captured HTTP requests
-              </p>
-            </div>
-
-            <Filters
-              onFilterChange={handleFilterChange}
-              onClear={handleClearRequests}
-            />
-
-            <div className="bg-background rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-6 py-4 border-b bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold">Request Log</h3>
-                  <div className="flex items-center gap-4">
-                    {selectedForComparison.length > 0 && (
-                      <Button
-                        onClick={handleStartComparison}
-                        disabled={selectedForComparison.length < 2}
-                        size="sm"
-                      >
-                        Compare {selectedForComparison.length} Selected
-                      </Button>
-                    )}
-                    <span className="text-sm text-muted-foreground">
-                      Showing {filteredRequests.length} of {requests.length}{" "}
-                      requests
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div
-                className="overflow-auto"
-                style={{ height: "calc(100vh - 380px)" }}
-              >
-                <RequestTable
-                  requests={filteredRequests}
-                  selectedRequest={selectedRequest}
-                  onRequestSelect={handleRequestSelect}
-                  selectedForComparison={selectedForComparison}
-                  onToggleComparison={handleToggleComparison}
-                  onReplay={handleStartReplay}
-                />
-              </div>
-            </div>
-          </div>
-        );
-
-      case "environment":
-        return (
-          <div className="space-y-8 animate-in fade-in-50 duration-500">
-            <div className="mb-2">
-              <h1 className="text-3xl font-bold tracking-tight">Environment</h1>
-              <p className="text-muted-foreground mt-1">
-                System information and environment variables
-              </p>
-            </div>
-            <EnvironmentInfo />
-          </div>
-        );
-
-      case "trace":
-        return (
-          <div className="space-y-8 animate-in fade-in-50 duration-500">
-            <div className="mb-2">
-              <h1 className="text-3xl font-bold tracking-tight">
-                Request Trace
-              </h1>
-              <p className="text-muted-foreground mt-1">
-                Analyze request execution flow, middleware chain, SQL queries,
-                and HTTP calls
-              </p>
-            </div>
-
-            {selectedRequest ? (
-              <RequestTrace request={selectedRequest} />
-            ) : (
-              <div>
-                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    Select a request from the table below to view its execution
-                    trace, including middleware execution, SQL queries, and
-                    external HTTP calls.
-                  </p>
-                </div>
-                <div className="bg-background rounded-xl shadow-sm border overflow-hidden">
-                  <div className="px-6 py-4 border-b bg-muted/30">
-                    <h3 className="text-lg font-semibold">
-                      Select a Request to Trace
-                    </h3>
-                  </div>
-                  <div
-                    className="overflow-auto"
-                    style={{ height: "calc(100vh - 380px)" }}
-                  >
-                    <RequestTable
-                      requests={filteredRequests.slice(0, 100)}
-                      selectedRequest={selectedRequest}
-                      onRequestSelect={handleRequestSelect}
-                      selectedForComparison={selectedForComparison}
-                      onToggleComparison={handleToggleComparison}
-                      onReplay={handleStartReplay}
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-
-      case "analytics":
-        return (
-          <div className="space-y-8 animate-in fade-in-50 duration-500">
-            <div className="mb-2">
-              <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
-              <p className="text-muted-foreground mt-1">
-                Performance metrics and request analysis
-              </p>
-            </div>
-
-            <ResponseTimeChart requests={requests} />
-
-            <ExportImport
-              requests={filteredRequests}
-              onImport={handleImportRequests}
-            />
-          </div>
-        );
-
-      default:
-        return null;
-    }
-  };
+  // The Inbox/Errors/Slow views share the three-pane layout. Analytics and
+  // Environment use the full content area (rail + page) instead.
+  const isListView =
+    view === "inbox" || view === "errors" || view === "slow";
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-background to-muted/20">
-      {/* Sidebar */}
-      <SimpleSidebar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        stats={stats}
-        onClearAll={handleClearRequests}
-      />
+    <div class="h-screen bg-zinc-50 text-zinc-950 flex overflow-hidden">
+      <RailNav active={view} onChange={setView} errorCount={errorCount} />
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-8">{renderContent()}</div>
-      </main>
+      {isListView ? (
+        <Fragment>
+          <RequestList
+            title={titleFor(view)}
+            subtitle={subtitleFor(view)}
+            requests={filtered}
+            selectedId={selected?.ID}
+            onSelect={setSelected}
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+            search={search}
+            onSearchChange={setSearch}
+            live={live}
+          />
+          <DetailPane
+            request={selected}
+            onReplay={(r) => setReplayRequest(r)}
+            onCompareAdd={handleCompareToggle}
+            comparePending={selected ? compareIds.includes(selected.ID) : false}
+          />
+        </Fragment>
+      ) : view === "analytics" ? (
+        <Analytics
+          requests={requests}
+          onClearAll={handleClearAll}
+          onImport={handleImport}
+        />
+      ) : (
+        <EnvironmentView />
+      )}
 
-      {/* Request Drawer */}
-      <RequestDrawer
-        request={selectedRequest}
-        open={drawerOpen}
-        onOpenChange={setDrawerOpen}
-      />
+      {/* Floating bar for batch compare. Only appears when 2+ items are checked. */}
+      {compareIds.length >= 2 && (
+        <div class="fixed left-1/2 -translate-x-1/2 bottom-6 bg-zinc-900 text-white rounded-full shadow-xl px-5 py-2.5 flex items-center gap-4 text-sm z-40">
+          <span class="font-medium">{compareIds.length} selected</span>
+          <div class="w-px h-4 bg-white/20" />
+          <button
+            onClick={() => setShowComparison(true)}
+            class="hover:text-zinc-200"
+          >
+            Compare
+          </button>
+          <button
+            onClick={() => setCompareIds([])}
+            class="text-zinc-400 hover:text-white text-xs"
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
-      {/* Comparison Modal */}
       {showComparison && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background rounded-lg p-6 max-w-7xl max-h-[90vh] overflow-auto">
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+          <div class="bg-white rounded-lg p-6 max-w-7xl w-full max-h-[90vh] overflow-auto">
             <RequestComparison
-              requestIds={selectedForComparison}
+              requestIds={compareIds}
               allRequests={requests}
               onClose={() => {
                 setShowComparison(false);
-                setSelectedForComparison([]);
+                setCompareIds([]);
               }}
             />
           </div>
         </div>
       )}
 
-      {/* Replay Modal */}
-      {showReplay && replayRequest && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-background rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-auto">
+      {replayRequest && (
+        <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+          <div class="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-auto">
             <RequestReplay
               request={replayRequest}
-              onClose={() => {
-                setShowReplay(false);
-                setReplayRequest(null);
-              }}
+              onClose={() => setReplayRequest(null)}
             />
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function statusKey(s: number): "2xx" | "3xx" | "4xx" | "5xx" | null {
+  if (s >= 200 && s < 300) return "2xx";
+  if (s >= 300 && s < 400) return "3xx";
+  if (s >= 400 && s < 500) return "4xx";
+  if (s >= 500) return "5xx";
+  return null;
+}
+
+function titleFor(v: View): string {
+  switch (v) {
+    case "inbox":
+      return "Inbox";
+    case "errors":
+      return "Errors";
+    case "slow":
+      return "Slow";
+    case "analytics":
+      return "Analytics";
+    case "environment":
+      return "Environment";
+  }
+}
+
+function subtitleFor(v: View): string | undefined {
+  switch (v) {
+    case "errors":
+      return "Status 4xx and 5xx";
+    case "slow":
+      return `Duration ≥ ${SLOW_MS}ms`;
+    default:
+      return undefined;
+  }
+}
+
+function EnvironmentView() {
+  return (
+    <main class="flex-1 overflow-auto">
+      <header class="px-8 pt-6 pb-4">
+        <h1 class="text-2xl font-semibold tracking-tight">Environment</h1>
+        <p class="text-sm text-zinc-500 mt-1">
+          Server runtime and explicitly allowlisted environment variables.
+        </p>
+      </header>
+      <div class="px-8 pb-8">
+        <EnvironmentInfo />
+      </div>
+    </main>
   );
 }

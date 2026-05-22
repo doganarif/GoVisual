@@ -1,6 +1,6 @@
 import { h } from "preact";
 import { useState } from "preact/hooks";
-import { api, RequestLog, ReplayResponse } from "../lib/api";
+import { api, ApiError, RequestLog, ReplayResponse } from "../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -65,7 +65,26 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
 
       setReplayResponse(response);
     } catch (error) {
-      setReplayError(error.message || "Failed to replay request");
+      if (error instanceof ApiError) {
+        if (error.isNotFound) {
+          setReplayError(
+            "Replay is disabled on the server. Enable it with " +
+              "govisual.WithReplayEnabled(true)."
+          );
+        } else if (error.isUnauthorized) {
+          setReplayError(
+            `Replay rejected (${error.status}): ${error.body || "unauthorized"}`
+          );
+        } else {
+          setReplayError(
+            `Replay failed (${error.status}): ${error.body || error.message}`
+          );
+        }
+      } else {
+        setReplayError(
+          error instanceof Error ? error.message : "Failed to replay request"
+        );
+      }
     } finally {
       setIsReplaying(false);
     }
