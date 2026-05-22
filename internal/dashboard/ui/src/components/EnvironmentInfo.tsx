@@ -1,111 +1,117 @@
 import { h } from "preact";
 import { useState, useEffect } from "preact/hooks";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
+import { api, ApiError, SystemInfo } from "../lib/api";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "./ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./ui/table";
 
-interface SystemInfo {
-  goVersion: string;
-  goos: string;
-  goarch: string;
-  hostname: string;
-  cpuCores: number;
-  memoryUsed: number;
-  memoryTotal: number;
-  envVars: Record<string, string>;
-}
+type State =
+  | { kind: "loading" }
+  | { kind: "ready"; info: SystemInfo }
+  | { kind: "disabled" } // endpoint gated off by server config
+  | { kind: "error"; message: string };
 
 export function EnvironmentInfo() {
-  const [systemInfo, setSystemInfo] = useState<SystemInfo>({
-    goVersion: "Loading...",
-    goos: "Loading...",
-    goarch: "Loading...",
-    hostname: "Loading...",
-    cpuCores: 0,
-    memoryUsed: 0,
-    memoryTotal: 0,
-    envVars: {}
-  });
+  const [state, setState] = useState<State>({ kind: "loading" });
 
   useEffect(() => {
-    // Fetch system info from API
-    fetchSystemInfo();
+    const controller = new AbortController();
+    api
+      .getSystemInfo(controller.signal)
+      .then((info) => setState({ kind: "ready", info }))
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        if (err instanceof ApiError && err.isNotFound) {
+          setState({ kind: "disabled" });
+          return;
+        }
+        setState({
+          kind: "error",
+          message: err instanceof Error ? err.message : "Failed to load",
+        });
+      });
+    return () => controller.abort();
   }, []);
 
-  const fetchSystemInfo = async () => {
-    try {
-      const response = await fetch("/__viz/api/system-info");
-      if (response.ok) {
-        const data = await response.json();
-        setSystemInfo(data);
-      }
-    } catch (error) {
-      console.error("Failed to fetch system info:", error);
-      // Set default values for demo
-      setSystemInfo({
-        goVersion: "go1.21.0",
-        goos: "darwin",
-        goarch: "arm64",
-        hostname: "localhost",
-        cpuCores: navigator.hardwareConcurrency || 4,
-        memoryUsed: 256,
-        memoryTotal: 1024,
-        envVars: {
-          PATH: "/usr/local/bin:/usr/bin:/bin",
-          HOME: "/Users/user",
-          GOPATH: "/Users/user/go"
-        }
-      });
-    }
-  };
+  if (state.kind === "loading") {
+    return (
+      <div className="text-sm text-muted-foreground">
+        Loading system information...
+      </div>
+    );
+  }
 
-  const memoryPercentage = (systemInfo.memoryUsed / systemInfo.memoryTotal) * 100;
+  if (state.kind === "disabled") {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>System info is disabled</CardTitle>
+          <CardDescription>
+            The <code>/__viz/api/system-info</code> endpoint is off by default.
+            Enable it on the server with{" "}
+            <code>govisual.WithSystemInfo(...)</code>, passing the env var
+            allowlist you want exposed.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <Card className="border-destructive/50 bg-destructive/5">
+        <CardHeader>
+          <CardTitle>Failed to load system info</CardTitle>
+          <CardDescription className="text-destructive">
+            {state.message}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const info = state.info;
+  const memoryPercentage =
+    info.memoryTotal > 0 ? (info.memoryUsed / info.memoryTotal) * 100 : 0;
+  const envEntries = Object.entries(info.envVars);
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Go Environment */}
         <Card>
           <CardHeader>
             <CardTitle>Go Environment</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">Version:</span>
-              <span className="text-sm font-medium">{systemInfo.goVersion}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">GOOS:</span>
-              <span className="text-sm font-medium">{systemInfo.goos}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">GOARCH:</span>
-              <span className="text-sm font-medium">{systemInfo.goarch}</span>
-            </div>
+            <Row label="Version" value={info.goVersion} />
+            <Row label="GOOS" value={info.goos} />
+            <Row label="GOARCH" value={info.goarch} />
           </CardContent>
         </Card>
 
-        {/* System Info */}
         <Card>
           <CardHeader>
             <CardTitle>System</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">Hostname:</span>
-              <span className="text-sm font-medium">{systemInfo.hostname}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">OS:</span>
-              <span className="text-sm font-medium">{systemInfo.goos}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-muted-foreground">CPU Cores:</span>
-              <span className="text-sm font-medium">{systemInfo.cpuCores}</span>
-            </div>
+            <Row label="Hostname" value={info.hostname} />
+            <Row label="OS" value={info.goos} />
+            <Row label="CPU Cores" value={String(info.cpuCores)} />
           </CardContent>
         </Card>
 
-        {/* Memory Usage */}
         <Card>
           <CardHeader>
             <CardTitle>Memory Usage</CardTitle>
@@ -113,14 +119,14 @@ export function EnvironmentInfo() {
           <CardContent>
             <div className="space-y-2">
               <div className="w-full bg-gray-200 rounded-full h-2">
-                <div 
+                <div
                   className="bg-primary h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${memoryPercentage}%` }}
+                  style={{ width: `${Math.min(100, memoryPercentage)}%` }}
                 />
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">
-                  {systemInfo.memoryUsed}MB / {systemInfo.memoryTotal}MB
+                  {info.memoryUsed}MB / {info.memoryTotal}MB
                 </span>
                 <span className="font-medium">
                   {memoryPercentage.toFixed(1)}%
@@ -131,35 +137,53 @@ export function EnvironmentInfo() {
         </Card>
       </div>
 
-      {/* Environment Variables */}
       <Card>
         <CardHeader>
           <CardTitle>Environment Variables</CardTitle>
-          <CardDescription>System environment variables (sensitive values are redacted)</CardDescription>
+          <CardDescription>
+            Only variables explicitly allowlisted on the server are shown.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="max-h-96 overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Value</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {Object.entries(systemInfo.envVars).map(([key, value]) => (
-                  <TableRow key={key}>
-                    <TableCell className="font-mono text-sm">{key}</TableCell>
-                    <TableCell className="font-mono text-sm text-muted-foreground">
-                      {value}
-                    </TableCell>
+          {envEntries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No environment variables are exposed. Pass names to
+              <code className="mx-1">WithSystemInfo(...)</code>
+              on the server to surface them here.
+            </p>
+          ) : (
+            <div className="max-h-96 overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Value</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+                </TableHeader>
+                <TableBody>
+                  {envEntries.map(([key, value]) => (
+                    <TableRow key={key}>
+                      <TableCell className="font-mono text-sm">{key}</TableCell>
+                      <TableCell className="font-mono text-sm text-muted-foreground break-all">
+                        {value}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-sm text-muted-foreground">{label}:</span>
+      <span className="text-sm font-medium">{value}</span>
     </div>
   );
 }

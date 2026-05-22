@@ -90,100 +90,148 @@ export interface ReplayResponse {
   originalRequest: string;
 }
 
+// ApiError carries the HTTP status and response body so callers can render
+// useful messages instead of a generic "Failed to fetch". A 404 from a gated
+// endpoint and a 403 from an SSRF rejection look the same without this.
+export class ApiError extends Error {
+  status: number;
+  body: string;
+  constructor(status: number, body: string, message?: string) {
+    super(message || body || `request failed (${status})`);
+    this.status = status;
+    this.body = body;
+  }
+  get isNotFound() {
+    return this.status === 404;
+  }
+  get isUnauthorized() {
+    return this.status === 401 || this.status === 403;
+  }
+}
+
+async function request<T>(
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new ApiError(response.status, text);
+  }
+  // Some endpoints (clear) return no JSON body.
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    return undefined as unknown as T;
+  }
+  return response.json();
+}
+
+// LiveEvent describes the two SSE event types the server emits. Callers
+// route by `kind`.
+export type LiveEvent =
+  | { kind: "snapshot"; data: RequestLog[] }
+  | { kind: "append"; data: RequestLog[] };
+
 class API {
   private baseURL = "/__viz/api";
 
-  async getRequests(): Promise<RequestLog[]> {
-    const response = await fetch(`${this.baseURL}/requests`);
-    if (!response.ok) throw new Error("Failed to fetch requests");
-    return response.json();
+  getRequests(signal?: AbortSignal): Promise<RequestLog[]> {
+    return request<RequestLog[]>(`${this.baseURL}/requests`, { signal });
   }
 
   async clearRequests(): Promise<void> {
-    const response = await fetch(`${this.baseURL}/clear`, {
+    await request<void>(`${this.baseURL}/clear`, { method: "POST" });
+  }
+
+  compareRequests(
+    requestIds: string[],
+    signal?: AbortSignal
+  ): Promise<RequestLog[]> {
+    const params = requestIds
+      .map((id) => `id=${encodeURIComponent(id)}`)
+      .join("&");
+    return request<RequestLog[]>(`${this.baseURL}/compare?${params}`, { signal });
+  }
+
+  replayRequest(payload: ReplayRequest): Promise<ReplayResponse> {
+    return request<ReplayResponse>(`${this.baseURL}/replay`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
-    if (!response.ok) throw new Error("Failed to clear requests");
   }
 
-  async compareRequests(requestIds: string[]): Promise<RequestLog[]> {
-    const params = requestIds.map((id) => `id=${id}`).join("&");
-    const response = await fetch(`${this.baseURL}/compare?${params}`);
-    if (!response.ok) throw new Error("Failed to compare requests");
-    return response.json();
+  getMetrics(
+    requestId: string,
+    signal?: AbortSignal
+  ): Promise<PerformanceMetrics> {
+    return request<PerformanceMetrics>(
+      `${this.baseURL}/metrics?id=${encodeURIComponent(requestId)}`,
+      { signal }
+    );
   }
 
-  async replayRequest(request: ReplayRequest): Promise<ReplayResponse> {
-    const response = await fetch(`${this.baseURL}/replay`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-    });
-    if (!response.ok) throw new Error("Failed to replay request");
-    return response.json();
+  getFlameGraph(
+    requestId: string,
+    signal?: AbortSignal
+  ): Promise<FlameGraphNode> {
+    return request<FlameGraphNode>(
+      `${this.baseURL}/flamegraph?id=${encodeURIComponent(requestId)}`,
+      { signal }
+    );
   }
 
-  async getMetrics(requestId: string): Promise<PerformanceMetrics> {
-    const response = await fetch(`${this.baseURL}/metrics?id=${requestId}`);
-    if (!response.ok) throw new Error("Failed to fetch metrics");
-    return response.json();
+  getBottlenecks(signal?: AbortSignal): Promise<any[]> {
+    return request<any[]>(`${this.baseURL}/bottlenecks`, { signal });
   }
 
-  async getFlameGraph(requestId: string): Promise<FlameGraphNode> {
-    const response = await fetch(`${this.baseURL}/flamegraph?id=${requestId}`);
-    if (!response.ok) throw new Error("Failed to fetch flame graph");
-    return response.json();
+  getSystemInfo(signal?: AbortSignal): Promise<SystemInfo> {
+    return request<SystemInfo>(`${this.baseURL}/system-info`, { signal });
   }
 
-  async getBottlenecks(): Promise<any[]> {
-    const response = await fetch(`${this.baseURL}/bottlenecks`);
-    if (!response.ok) throw new Error("Failed to fetch bottlenecks");
-    return response.json();
-  }
-
-  async getSystemInfo(): Promise<SystemInfo> {
-    const response = await fetch(`${this.baseURL}/system-info`);
-    if (!response.ok) throw new Error("Failed to fetch system info");
-    return response.json();
-  }
-
-  subscribeToEvents(onMessage: (data: RequestLog[]) => void): EventSource {
+  // subscribeToEvents wires both named SSE events the server emits:
+  //   "snapshot": full state, replaces the client list (initial connect and
+  //                resync after the store is cleared)
+  //   "append":   one or more new requests, prepended to the client list
+  // A default onmessage handler would receive neither — named events go
+  // exclusively to addEventListener.
+  subscribeToEvents(
+    onEvent: (event: LiveEvent) => void,
+    onError?: (err: Event) => void
+  ): EventSource {
     const eventSource = new EventSource(`${this.baseURL}/events`);
 
-    eventSource.onmessage = (event) => {
+    const handle = (kind: LiveEvent["kind"]) => (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data);
-        onMessage(data);
-      } catch (error) {
-        console.error("Failed to parse event data:", error);
+        onEvent({ kind, data });
+      } catch (err) {
+        console.error(`Failed to parse ${kind} event:`, err);
       }
     };
 
-    eventSource.onerror = (error) => {
-      console.error("EventSource error:", error);
-    };
+    eventSource.addEventListener(
+      "snapshot",
+      handle("snapshot") as EventListener
+    );
+    eventSource.addEventListener("append", handle("append") as EventListener);
 
+    if (onError) {
+      eventSource.onerror = onError;
+    }
     return eventSource;
   }
 
-  // Export requests as JSON
   exportRequests(requests: RequestLog[]): string {
     return JSON.stringify(requests, null, 2);
   }
 
-  // Import requests from JSON
   importRequests(jsonString: string): RequestLog[] {
-    try {
-      const data = JSON.parse(jsonString);
-      if (Array.isArray(data)) {
-        return data as RequestLog[];
-      }
+    const data = JSON.parse(jsonString);
+    if (!Array.isArray(data)) {
       throw new Error("Invalid format: expected an array of requests");
-    } catch (error) {
-      throw new Error(`Failed to import requests: ${error.message}`);
     }
+    return data as RequestLog[];
   }
 }
 

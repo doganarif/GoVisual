@@ -193,14 +193,21 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	if !writeEvent("snapshot", h.store.GetAll()) {
+	initial := h.store.GetAll()
+	if !writeEvent("snapshot", initial) {
 		return
 	}
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	// Seed lastSeen from the snapshot we just sent. Without this, the first
+	// tick would re-emit every entry as an "append" event because the
+	// "lastSeen == \"\"" branch treats the whole latest list as new.
 	lastSeen := ""
+	if len(initial) > 0 {
+		lastSeen = initial[0].ID
+	}
 	for {
 		select {
 		case <-ticker.C:
