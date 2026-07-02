@@ -53,9 +53,9 @@ type Config struct {
 	// If nil, the dashboard is fully open — only safe for local dev.
 	DashboardAuth DashboardAuth
 
-	// LocalhostOnly, when true, rejects dashboard requests whose remote address
-	// is not a loopback IP. This is the safest default for "I'm just debugging
-	// locally" — even with the rest of the server bound to 0.0.0.0.
+	// LocalhostOnly rejects dashboard requests whose remote address is not a
+	// loopback IP. On by default — even with the rest of the server bound to
+	// 0.0.0.0, the dashboard stays local unless WithAllowRemote is used.
 	LocalhostOnly bool
 
 	// EnableReplay enables the POST /__viz/api/replay endpoint, which lets the
@@ -218,11 +218,20 @@ func WithBasicAuth(username, password string) Option {
 }
 
 // WithLocalhostOnly restricts the dashboard to requests originating from a
-// loopback address. Combine with WithDashboardAuth/WithBasicAuth for defense
-// in depth.
+// loopback address. This is the default; the option exists so the intent can
+// be stated explicitly.
 func WithLocalhostOnly() Option {
 	return func(c *Config) {
 		c.LocalhostOnly = true
+	}
+}
+
+// WithAllowRemote lets non-loopback addresses reach the dashboard. Pair it
+// with WithBasicAuth or WithDashboardAuth — an open dashboard exposes every
+// captured request and response body to whoever can reach the port.
+func WithAllowRemote() Option {
+	return func(c *Config) {
+		c.LocalhostOnly = false
 	}
 }
 
@@ -276,6 +285,7 @@ func defaultConfig() *Config {
 		ProfileType:         profiling.ProfileAll,
 		ProfileThreshold:    10 * time.Millisecond,
 		MaxProfileMetrics:   1000,
+		LocalhostOnly:       true,
 		EnableReplay:        false,
 		ExposeSystemInfo:    false,
 	}

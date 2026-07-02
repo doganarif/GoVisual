@@ -71,7 +71,7 @@ handler := govisual.Wrap(
     govisual.WithIgnorePaths("/health"),        // Paths to ignore
 
     // Dashboard access (all off by default)
-    govisual.WithLocalhostOnly(),               // Only loopback addresses may open the dashboard
+    govisual.WithAllowRemote(),                 // Dashboard is loopback-only by default; opt out here
     govisual.WithBasicAuth("admin", "secret"),  // Protect the dashboard with Basic Auth
     govisual.WithReplayEnabled(true),           // Allow replaying captured requests
     govisual.WithSystemInfo("GOPATH", "HOME"),  // Expose runtime info + allowlisted env vars
@@ -113,12 +113,12 @@ handler := govisual.Wrap(traced) // wrapping the traced mux keeps the dashboard 
 
 ## Dashboard Security
 
-The dashboard is meant for local development, so the risky endpoints are off unless you opt in:
+The dashboard is meant for local development, so everything risky is off unless you opt in:
 
-- **Request replay** (`WithReplayEnabled`) is disabled by default — the endpoint makes the server issue outbound HTTP requests, so only enable it together with `WithLocalhostOnly()` or auth.
+- **The dashboard only answers loopback addresses by default.** `WithAllowRemote()` opens it up — pair that with auth.
+- **Request replay** (`WithReplayEnabled`) is disabled by default — the endpoint makes the server issue outbound HTTP requests.
 - **System info** (`WithSystemInfo`) is disabled by default. Environment variables are only exposed if you pass their names explicitly: `WithSystemInfo("GOPATH", "HOME")`.
 - `WithBasicAuth(user, pass)` or `WithDashboardAuth(func(*http.Request) bool)` gate every dashboard request.
-- `WithLocalhostOnly()` rejects dashboard requests from non-loopback addresses.
 
 ## Storage Backends
 
