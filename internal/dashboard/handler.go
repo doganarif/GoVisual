@@ -193,19 +193,20 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return true
 	}
 
-	initial := h.store.GetAll()
-	if !writeEvent("snapshot", initial) {
-		return
-	}
-
 	// When the store is notifying (the default via Wrap), new entries are
 	// pushed as they arrive; the ticker degrades to a heartbeat and a
-	// safety-net resync.
+	// safety-net resync. Subscribe before taking the snapshot so an Add in
+	// between is never silently missed — it just triggers one no-op flush.
 	var notify <-chan struct{}
 	if ns, ok := h.store.(*store.NotifyingStore); ok {
 		ch, cancel := ns.Subscribe()
 		defer cancel()
 		notify = ch
+	}
+
+	initial := h.store.GetAll()
+	if !writeEvent("snapshot", initial) {
+		return
 	}
 	tick := 15 * time.Second
 	if notify == nil {
