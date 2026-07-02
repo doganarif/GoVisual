@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"sync"
@@ -139,15 +140,22 @@ func readBodyCapped(r io.Reader, maxBody int) ([]byte, bool, error) {
 
 // Wrap wraps an http.Handler with the request visualization middleware
 func Wrap(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher) http.Handler {
-	return WrapWithLimits(handler, st, logRequestBody, logResponseBody, pathMatcher, DefaultMaxBodyBytes)
+	return WrapWithLimits(handler, st, logRequestBody, logResponseBody, pathMatcher, DefaultMaxBodyBytes, 1)
 }
 
 // WrapWithLimits is identical to Wrap but allows the caller to specify the maximum number of
-// captured body bytes (per request and per response). A value <= 0 disables the cap.
-func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, maxBody int) http.Handler {
+// captured body bytes (per request and per response, <= 0 disables the cap)
+// and the sampling rate (0..1; requests that lose the coin toss pass through
+// uncaptured).
+func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, maxBody int, sampleRate float64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
+			handler.ServeHTTP(w, r)
+			return
+		}
+
+		if sampleRate < 1 && rand.Float64() >= sampleRate {
 			handler.ServeHTTP(w, r)
 			return
 		}

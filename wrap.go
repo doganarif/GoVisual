@@ -46,13 +46,13 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		wrapped = middleware.WrapWithProfilingAndLimits(
 			handler, requestStore,
 			config.LogRequestBody, config.LogResponseBody,
-			config, profiler, config.effectiveMaxBody(),
+			config, profiler, config.effectiveMaxBody(), config.SampleRate,
 		)
 	} else {
 		wrapped = middleware.WrapWithLimits(
 			handler, requestStore,
 			config.LogRequestBody, config.LogResponseBody,
-			config, config.effectiveMaxBody(),
+			config, config.effectiveMaxBody(), config.SampleRate,
 		)
 	}
 

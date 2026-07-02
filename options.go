@@ -33,6 +33,10 @@ type Config struct {
 
 	IgnorePaths []string
 
+	// SampleRate is the fraction of requests to capture, 0..1. 1 captures
+	// everything (the default); lower values shed load on chatty services.
+	SampleRate float64
+
 	// Store is the storage backend for captured requests. Nil means an
 	// in-memory store bounded by MaxRequests. Database-backed stores live in
 	// their own modules under store/ (postgres, redis, sqlite, mongodb).
@@ -121,6 +125,21 @@ func WithResponseBodyLogging(enabled bool) Option {
 func WithMaxBodyBytes(n int) Option {
 	return func(c *Config) {
 		c.MaxBodyBytes = n
+	}
+}
+
+// WithSampleRate captures only the given fraction of requests (0..1).
+// Uncaptured requests pass through with no overhead. Useful when govisual
+// wraps a busy service and full capture would be noise.
+func WithSampleRate(rate float64) Option {
+	return func(c *Config) {
+		if rate < 0 {
+			rate = 0
+		}
+		if rate > 1 {
+			rate = 1
+		}
+		c.SampleRate = rate
 	}
 }
 
@@ -275,18 +294,19 @@ func WithShutdownContext(ctx context.Context) Option {
 // defaultConfig returns the default configuration
 func defaultConfig() *Config {
 	return &Config{
-		MaxRequests:         100,
-		DashboardPath:       "/__viz",
-		LogRequestBody:      false,
-		LogResponseBody:     false,
-		MaxBodyBytes:        0, // 0 => use middleware.DefaultMaxBodyBytes
-		IgnorePaths:         []string{},
-		EnableProfiling:     false,
-		ProfileType:         profiling.ProfileAll,
-		ProfileThreshold:    10 * time.Millisecond,
-		MaxProfileMetrics:   1000,
-		LocalhostOnly:       true,
-		EnableReplay:        false,
-		ExposeSystemInfo:    false,
+		MaxRequests:       100,
+		DashboardPath:     "/__viz",
+		LogRequestBody:    false,
+		LogResponseBody:   false,
+		MaxBodyBytes:      0, // 0 => use middleware.DefaultMaxBodyBytes
+		IgnorePaths:       []string{},
+		SampleRate:        1,
+		EnableProfiling:   false,
+		ProfileType:       profiling.ProfileAll,
+		ProfileThreshold:  10 * time.Millisecond,
+		MaxProfileMetrics: 1000,
+		LocalhostOnly:     true,
+		EnableReplay:      false,
+		ExposeSystemInfo:  false,
 	}
 }

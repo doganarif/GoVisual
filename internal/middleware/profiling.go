@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -20,13 +21,18 @@ type ProfilingConfig struct {
 
 // WrapWithProfiling wraps an http.Handler with request visualization and performance profiling.
 func WrapWithProfiling(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler) http.Handler {
-	return WrapWithProfilingAndLimits(handler, st, logRequestBody, logResponseBody, pathMatcher, profiler, DefaultMaxBodyBytes)
+	return WrapWithProfilingAndLimits(handler, st, logRequestBody, logResponseBody, pathMatcher, profiler, DefaultMaxBodyBytes, 1)
 }
 
 // WrapWithProfilingAndLimits is identical to WrapWithProfiling but exposes the captured-body size cap.
-func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int) http.Handler {
+func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int, sampleRate float64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
+			handler.ServeHTTP(w, r)
+			return
+		}
+
+		if sampleRate < 1 && rand.Float64() >= sampleRate {
 			handler.ServeHTTP(w, r)
 			return
 		}
