@@ -46,7 +46,7 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 			"query":  r.URL.RawQuery,
 		})
 
-		ctx := r.Context()
+		ctx, collector := WithLogCollector(r.Context())
 		ctx = WithTracer(ctx, tracer)
 		// Register the tracer as a TracerSink so the profiler forwards SQL/HTTP
 		// events into the tracer's child traces.
@@ -119,6 +119,8 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 		if logResponseBody {
 			reqLog.ResponseBody = resWriter.body()
 		}
+
+		reqLog.Logs = collector.Snapshot()
 
 		_ = st.Add(reqLog)
 	})

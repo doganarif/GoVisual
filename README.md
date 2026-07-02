@@ -87,6 +87,30 @@ handler := govisual.Wrap(
 )
 ```
 
+## SQL Query Capture
+
+Wrap your database driver and every query executed with a request's context lands on that request's profile — durations, affected rows, and errors:
+
+```go
+sql.Register("postgres+viz", govisual.WrapDriver(&pq.Driver{}))
+db, err := sql.Open("postgres+viz", dsn)
+```
+
+Run queries with the request context (`db.QueryContext(r.Context(), ...)`) and enable profiling (`WithProfiling(true)`).
+
+## Log Capture
+
+Wrap your slog handler and log lines emitted while handling a request travel with that request:
+
+```go
+logger := slog.New(govisual.SlogHandler(slog.NewJSONHandler(os.Stdout, nil)))
+
+// in a handler:
+logger.InfoContext(r.Context(), "cache miss", "key", key)
+```
+
+Logging still reaches your base handler exactly as before; govisual just keeps a bounded copy (200 lines per request) alongside the captured request.
+
 ## OpenTelemetry
 
 Tracing lives in its own module so the OTel SDK and gRPC stay out of builds that don't use them:
