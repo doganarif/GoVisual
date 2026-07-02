@@ -61,8 +61,8 @@ func (rt *RequestTracer) StartTrace(name, traceType string, details interface{})
 		rt.Traces = append(rt.Traces, entry)
 		rt.currentPath = append(rt.currentPath, len(rt.Traces)-1)
 	} else {
-		// Nested trace
-		parent := rt.getParentTrace()
+		// Nested trace: the entry currentPath points at becomes the parent.
+		parent := rt.getCurrentTrace()
 		if parent != nil {
 			parent.Children = append(parent.Children, entry)
 			rt.currentPath = append(rt.currentPath, len(parent.Children)-1)
@@ -238,26 +238,6 @@ func (rt *RequestTracer) getCurrentTrace() *TraceEntry {
 
 	trace := &rt.Traces[rt.currentPath[0]]
 	for i := 1; i < len(rt.currentPath); i++ {
-		if rt.currentPath[i] >= len(trace.Children) {
-			return nil // Invalid path, cannot traverse further
-		}
-		trace = &trace.Children[rt.currentPath[i]]
-	}
-	return trace
-}
-
-func (rt *RequestTracer) getParentTrace() *TraceEntry {
-	if len(rt.currentPath) <= 1 {
-		return nil
-	}
-
-	// Check if root index is valid
-	if rt.currentPath[0] >= len(rt.Traces) {
-		return nil
-	}
-
-	trace := &rt.Traces[rt.currentPath[0]]
-	for i := 1; i < len(rt.currentPath)-1; i++ {
 		if rt.currentPath[i] >= len(trace.Children) {
 			return nil // Invalid path, cannot traverse further
 		}
