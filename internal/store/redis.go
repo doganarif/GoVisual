@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"sort"
 	"sync/atomic"
 	"time"
 
@@ -174,10 +173,12 @@ func (s *RedisStore) getLogs(ctx context.Context, ids []string) []*model.Request
 		return nil
 	}
 
+	// Keep results aligned with ids so the ZRevRange order survives; a map
+	// here would shuffle entries that share a timestamp.
 	pipe := s.client.Pipeline()
-	cmds := make(map[string]*redis.StringCmd, len(ids))
-	for _, id := range ids {
-		cmds[id] = pipe.Get(ctx, s.keyPrefix+id)
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.Get(ctx, s.keyPrefix+id)
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		log.Printf("govisual: failed to execute Redis pipeline: %v", err)
@@ -185,25 +186,32 @@ func (s *RedisStore) getLogs(ctx context.Context, ids []string) []*model.Request
 	}
 
 	logs := make([]*model.RequestLog, 0, len(ids))
-	for id, cmd := range cmds {
+	var expired []interface{}
+	for i, cmd := range cmds {
 		data, err := cmd.Bytes()
 		if err != nil {
-			if err != redis.Nil {
-				log.Printf("govisual: failed to get Redis log %s: %v", id, err)
+			if err == redis.Nil {
+				// The key expired but its ID is still indexed; prune it so
+				// the sorted set doesn't diverge from the key space.
+				expired = append(expired, ids[i])
+			} else {
+				log.Printf("govisual: failed to get Redis log %s: %v", ids[i], err)
 			}
 			continue
 		}
 		var reqLog model.RequestLog
 		if err := json.Unmarshal(data, &reqLog); err != nil {
-			log.Printf("govisual: failed to unmarshal Redis log %s: %v", id, err)
+			log.Printf("govisual: failed to unmarshal Redis log %s: %v", ids[i], err)
 			continue
 		}
 		logs = append(logs, &reqLog)
 	}
 
-	sort.Slice(logs, func(i, j int) bool {
-		return logs[i].Timestamp.After(logs[j].Timestamp)
-	})
+	if len(expired) > 0 {
+		if err := s.client.ZRem(ctx, s.keyPrefix+"logs", expired...).Err(); err != nil {
+			log.Printf("govisual: failed to prune expired Redis log IDs: %v", err)
+		}
+	}
 	return logs
 }
 
