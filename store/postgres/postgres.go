@@ -59,6 +59,9 @@ func New(connStr, tableName string, capacity int) (*Store, error) {
 }
 
 func (s *Store) createTable() error {
+	// `extras` holds fields added in v2 (logs, panic stack, performance
+	// metrics) as a single JSONB blob so future capture fields don't need
+	// schema changes.
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id TEXT PRIMARY KEY,
@@ -75,6 +78,7 @@ func (s *Store) createTable() error {
 			error TEXT,
 			middleware_trace JSONB,
 			route_trace JSONB,
+			extras JSONB,
 			created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 		)
 	`, s.tableName)
@@ -83,10 +87,51 @@ func (s *Store) createTable() error {
 		return err
 	}
 
+	// Add extras to pre-v2 tables. Postgres has IF NOT EXISTS on ADD COLUMN.
+	alter := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS extras JSONB", s.tableName)
+	if _, err := s.db.Exec(alter); err != nil {
+		log.Printf("govisual: ALTER TABLE for extras column failed: %v", err)
+	}
+
 	indexQuery := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_timestamp_idx ON %s (timestamp DESC)",
 		s.tableName, s.tableName)
 	_, err := s.db.Exec(indexQuery)
 	return err
+}
+
+// extrasPayload holds capture fields added in v2 that share a single JSONB
+// column. Serialized to `extras` on write and unpacked on read.
+type extrasPayload struct {
+	Logs               []store.LogEntry          `json:"logs,omitempty"`
+	PanicStack         string                    `json:"panic_stack,omitempty"`
+	PerformanceMetrics *store.PerformanceMetrics `json:"performance_metrics,omitempty"`
+}
+
+func encodeExtras(l *store.RequestLog) string {
+	p := extrasPayload{Logs: l.Logs, PanicStack: l.PanicStack, PerformanceMetrics: l.PerformanceMetrics}
+	if len(p.Logs) == 0 && p.PanicStack == "" && p.PerformanceMetrics == nil {
+		return "{}"
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		log.Printf("govisual: marshaling extras: %v", err)
+		return "{}"
+	}
+	return string(data)
+}
+
+func decodeExtras(s string, l *store.RequestLog) {
+	if s == "" || s == "{}" {
+		return
+	}
+	var p extrasPayload
+	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		log.Printf("govisual: unmarshaling extras for %s: %v", l.ID, err)
+		return
+	}
+	l.Logs = p.Logs
+	l.PanicStack = p.PanicStack
+	l.PerformanceMetrics = p.PerformanceMetrics
 }
 
 // Add adds a new request log to the store
@@ -112,8 +157,8 @@ func (s *Store) Add(reqLog *store.RequestLog) error {
 		INSERT INTO %s (
 			id, timestamp, method, path, query, request_headers, response_headers,
 			status_code, duration, request_body, response_body, error,
-			middleware_trace, route_trace
-		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
+			middleware_trace, route_trace, extras
+		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb)
 	`, s.tableName)
 
 	_, err := s.db.Exec(
@@ -132,6 +177,7 @@ func (s *Store) Add(reqLog *store.RequestLog) error {
 		reqLog.Error,
 		middlewareTrace,
 		routeTrace,
+		encodeExtras(reqLog),
 	)
 	if err != nil {
 		return fmt.Errorf("postgres insert: %w", err)
@@ -183,7 +229,8 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 			COALESCE(response_headers::text, '{}'),
 			status_code, duration, request_body, response_body, error,
 			COALESCE(middleware_trace::text, '[]'),
-			COALESCE(route_trace::text, '{}')
+			COALESCE(route_trace::text, '{}'),
+			COALESCE(extras::text, '{}')
 		FROM %s
 		WHERE id = $1
 	`, s.tableName)
@@ -194,6 +241,7 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 		respHeadersStr  string
 		middlewareTrace string
 		routeTrace      string
+		extras          string
 	)
 
 	err := s.db.QueryRow(query, id).Scan(
@@ -211,6 +259,7 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 		&reqLog.Error,
 		&middlewareTrace,
 		&routeTrace,
+		&extras,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -224,6 +273,7 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 	unmarshalLogJSON(respHeadersStr, &reqLog.ResponseHeaders, "response_headers", reqLog.ID)
 	unmarshalLogJSON(middlewareTrace, &reqLog.MiddlewareTrace, "middleware_trace", reqLog.ID)
 	unmarshalLogJSON(routeTrace, &reqLog.RouteTrace, "route_trace", reqLog.ID)
+	decodeExtras(extras, &reqLog)
 
 	return &reqLog, true
 }
@@ -237,7 +287,8 @@ func (s *Store) GetAll() []*store.RequestLog {
 			COALESCE(response_headers::text, '{}'),
 			status_code, duration, request_body, response_body, error,
 			COALESCE(middleware_trace::text, '[]'),
-			COALESCE(route_trace::text, '{}')
+			COALESCE(route_trace::text, '{}'),
+			COALESCE(extras::text, '{}')
 		FROM %s
 		ORDER BY timestamp DESC
 	`, s.tableName)
@@ -254,7 +305,8 @@ func (s *Store) GetLatest(n int) []*store.RequestLog {
 			COALESCE(response_headers::text, '{}'),
 			status_code, duration, request_body, response_body, error,
 			COALESCE(middleware_trace::text, '[]'),
-			COALESCE(route_trace::text, '{}')
+			COALESCE(route_trace::text, '{}'),
+			COALESCE(extras::text, '{}')
 		FROM %s
 		ORDER BY timestamp DESC
 		LIMIT $1
@@ -280,6 +332,7 @@ func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog
 			respHeadersStr  string
 			middlewareTrace string
 			routeTrace      string
+			extras          string
 		)
 
 		if err := rows.Scan(
@@ -297,6 +350,7 @@ func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog
 			&reqLog.Error,
 			&middlewareTrace,
 			&routeTrace,
+			&extras,
 		); err != nil {
 			log.Printf("govisual: failed to scan row: %v", err)
 			continue
@@ -306,6 +360,7 @@ func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog
 		unmarshalLogJSON(respHeadersStr, &reqLog.ResponseHeaders, "response_headers", reqLog.ID)
 		unmarshalLogJSON(middlewareTrace, &reqLog.MiddlewareTrace, "middleware_trace", reqLog.ID)
 		unmarshalLogJSON(routeTrace, &reqLog.RouteTrace, "route_trace", reqLog.ID)
+		decodeExtras(extras, &reqLog)
 
 		logs = append(logs, &reqLog)
 	}
