@@ -299,7 +299,9 @@ func defaultConfig() *Config {
 		LogRequestBody:    false,
 		LogResponseBody:   false,
 		MaxBodyBytes:      0, // 0 => use middleware.DefaultMaxBodyBytes
-		IgnorePaths:       []string{},
+		// Browser probes that would otherwise clutter every capture; users
+		// can extend this list via WithIgnorePaths.
+		IgnorePaths: []string{"/favicon.ico"},
 		SampleRate:        1,
 		EnableProfiling:   false,
 		ProfileType:       profiling.ProfileAll,
