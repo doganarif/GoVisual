@@ -133,7 +133,9 @@ export type LiveEvent =
   | { kind: "append"; data: RequestLog[] };
 
 class API {
-  private baseURL = "/__viz/api";
+  // Resolve the API base from wherever the dashboard is mounted so a
+  // custom WithDashboardPath keeps working (#31).
+  private baseURL = window.location.pathname.replace(/\/$/, "") + "/api";
 
   getRequests(signal?: AbortSignal): Promise<RequestLog[]> {
     return request<RequestLog[]>(`${this.baseURL}/requests`, { signal });

@@ -121,7 +121,7 @@ func WithMaxRequests(max int) Option {
 // WithDashboardPath sets the path to access the dashboard
 func WithDashboardPath(path string) Option {
 	return func(c *Config) {
-		c.DashboardPath = path
+		c.DashboardPath = strings.TrimSuffix(path, "/")
 	}
 }
 
