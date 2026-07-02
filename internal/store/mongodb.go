@@ -82,18 +82,11 @@ func (m *MongoDBStore) cleanup() {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
-	count, err := m.collection.CountDocuments(ctx, bson.M{})
-	if err != nil {
-		log.Printf("govisual: failed to count MongoDB logs: %v", err)
-		return
-	}
-	if count <= int64(m.capacity) {
-		return
-	}
-
+	// Select everything beyond the newest m.capacity documents by rank; a
+	// separate count would go stale under concurrent inserts.
 	findOptions := options.Find().
-		SetSort(bson.D{{Key: "timestamp", Value: 1}}).
-		SetLimit(count - int64(m.capacity)).
+		SetSort(bson.D{{Key: "timestamp", Value: -1}}).
+		SetSkip(int64(m.capacity)).
 		SetProjection(bson.M{"_id": 1})
 
 	cursor, err := m.collection.Find(ctx, bson.M{}, findOptions)

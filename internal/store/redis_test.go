@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -99,4 +100,40 @@ func ids(logs []*model.RequestLog) []string {
 		out[i] = l.ID
 	}
 	return out
+}
+
+func TestRedisStoreCleanupKeepsNewest(t *testing.T) {
+	connStr := os.Getenv("REDIS_CONN")
+	if connStr == "" {
+		t.Skip("REDIS_CONN not set; skipping Redis test")
+	}
+
+	store, err := NewRedisStore(connStr, 10, 3600)
+	if err != nil {
+		t.Fatalf("failed to create Redis store: %v", err)
+	}
+	defer store.Close()
+	defer store.Clear()
+
+	base := time.Now()
+	for i := 0; i < 25; i++ {
+		store.Add(&model.RequestLog{
+			ID:        fmt.Sprintf("req-%02d", i),
+			Timestamp: base.Add(time.Duration(i) * time.Second),
+			Method:    "GET",
+			Path:      "/x",
+		})
+	}
+
+	store.cleanup()
+
+	all := store.GetAll()
+	if len(all) != 10 {
+		t.Fatalf("expected capacity 10 after cleanup, got %d", len(all))
+	}
+	for _, l := range all {
+		if l.ID < "req-15" {
+			t.Fatalf("old entry %s survived cleanup", l.ID)
+		}
+	}
 }

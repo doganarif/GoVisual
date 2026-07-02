@@ -177,26 +177,18 @@ func (s *SQLiteStore) Add(reqLog *model.RequestLog) error {
 }
 
 func (s *SQLiteStore) cleanup() {
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", s.tableName)
-	var count int
-	if err := s.db.QueryRow(countQuery).Scan(&count); err != nil {
-		log.Printf("govisual: failed to count logs: %v", err)
-		return
-	}
-	if count <= s.capacity {
-		return
-	}
-
+	// One statement that keeps the newest rows; a separate COUNT would go
+	// stale under concurrent inserts and leave the table above capacity.
 	deleteQuery := fmt.Sprintf(`
 		DELETE FROM %s
-		WHERE id IN (
+		WHERE id NOT IN (
 			SELECT id FROM %s
-			ORDER BY created_at ASC, timestamp ASC
+			ORDER BY created_at DESC, timestamp DESC
 			LIMIT ?
 		)
 	`, s.tableName, s.tableName)
 
-	if _, err := s.db.Exec(deleteQuery, count-s.capacity); err != nil {
+	if _, err := s.db.Exec(deleteQuery, s.capacity); err != nil {
 		log.Printf("govisual: failed to clean up old logs: %v", err)
 	}
 }
