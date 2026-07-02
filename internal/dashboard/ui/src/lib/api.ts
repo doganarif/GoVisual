@@ -14,6 +14,15 @@ export interface RequestLog {
   MiddlewareTrace?: any[];
   RouteTrace?: any;
   PerformanceMetrics?: PerformanceMetrics;
+  Logs?: LogEntry[];
+  PanicStack?: string;
+}
+
+export interface LogEntry {
+  time: string;
+  level: string;
+  message: string;
+  attrs?: Record<string, unknown>;
 }
 
 export interface PerformanceMetrics {

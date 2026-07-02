@@ -802,6 +802,10 @@ button, a, input, select, textarea {
   margin-top: 0.5rem;
 }
 
+.mt-3 {
+  margin-top: 0.75rem;
+}
+
 .mt-4 {
   margin-top: 1rem;
 }
@@ -908,6 +912,10 @@ button, a, input, select, textarea {
 
 .max-h-48 {
   max-height: 12rem;
+}
+
+.max-h-64 {
+  max-height: 16rem;
 }
 
 .max-h-96 {
@@ -1144,6 +1152,10 @@ button, a, input, select, textarea {
   align-items: center;
 }
 
+.items-baseline {
+  align-items: baseline;
+}
+
 .justify-start {
   justify-content: flex-start;
 }
@@ -1186,6 +1198,15 @@ button, a, input, select, textarea {
 
 .gap-6 {
   gap: 1.5rem;
+}
+
+.gap-x-3 {
+  -moz-column-gap: 0.75rem;
+       column-gap: 0.75rem;
+}
+
+.gap-y-0\.5 {
+  row-gap: 0.125rem;
 }
 
 .space-y-1 > :not([hidden]) ~ :not([hidden]) {
@@ -1762,12 +1783,20 @@ button, a, input, select, textarea {
   padding-bottom: 2rem;
 }
 
+.pl-4 {
+  padding-left: 1rem;
+}
+
 .pr-2 {
   padding-right: 0.5rem;
 }
 
 .pt-0 {
   padding-top: 0px;
+}
+
+.pt-3 {
+  padding-top: 0.75rem;
 }
 
 .pt-6 {
@@ -1858,6 +1887,11 @@ button, a, input, select, textarea {
 
 .tracking-wide {
   letter-spacing: 0.025em;
+}
+
+.text-amber-600 {
+  --tw-text-opacity: 1;
+  color: rgb(217 119 6 / var(--tw-text-opacity, 1));
 }
 
 .text-amber-700 {
@@ -1958,6 +1992,10 @@ button, a, input, select, textarea {
 .text-red-600 {
   --tw-text-opacity: 1;
   color: rgb(220 38 38 / var(--tw-text-opacity, 1));
+}
+
+.text-red-600\/80 {
+  color: rgb(220 38 38 / 0.8);
 }
 
 .text-red-700 {
