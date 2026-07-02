@@ -65,7 +65,21 @@ handler := govisual.Wrap(
     govisual.WithDashboardPath("/__dashboard"), // Custom dashboard path
     govisual.WithRequestBodyLogging(true),      // Log request bodies
     govisual.WithResponseBodyLogging(true),     // Log response bodies
+    govisual.WithMaxBodyBytes(1 << 20),         // Cap captured body size (default 1 MiB)
     govisual.WithIgnorePaths("/health"),        // Paths to ignore
+
+    // Dashboard access (all off by default)
+    govisual.WithLocalhostOnly(),               // Only loopback addresses may open the dashboard
+    govisual.WithBasicAuth("admin", "secret"),  // Protect the dashboard with Basic Auth
+    govisual.WithReplayEnabled(true),           // Allow replaying captured requests
+    govisual.WithSystemInfo("GOPATH", "HOME"),  // Expose runtime info + allowlisted env vars
+
+    // Profiling
+    govisual.WithProfiling(true),               // Per-request CPU/memory profiling
+    govisual.WithProfileThreshold(50*time.Millisecond), // Only profile slow requests
+
+    govisual.WithShutdownContext(ctx),          // Release storage/telemetry when ctx is cancelled
+
     govisual.WithOpenTelemetry(true),           // Enable OpenTelemetry
     govisual.WithServiceName("my-service"),     // Service name for OTel
     govisual.WithServiceVersion("1.0.0"),       // Service version
@@ -83,6 +97,15 @@ handler := govisual.Wrap(
     ),
 )
 ```
+
+## Dashboard Security
+
+The dashboard is meant for local development, so the risky endpoints are off unless you opt in:
+
+- **Request replay** (`WithReplayEnabled`) is disabled by default — the endpoint makes the server issue outbound HTTP requests, so only enable it together with `WithLocalhostOnly()` or auth.
+- **System info** (`WithSystemInfo`) is disabled by default. Environment variables are only exposed if you pass their names explicitly: `WithSystemInfo("GOPATH", "HOME")`.
+- `WithBasicAuth(user, pass)` or `WithDashboardAuth(func(*http.Request) bool)` gate every dashboard request.
+- `WithLocalhostOnly()` rejects dashboard requests from non-loopback addresses.
 
 ## Storage Backends
 

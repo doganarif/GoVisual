@@ -26,6 +26,27 @@ handler := govisual.Wrap(
 | `WithRequestBodyLogging(bool)`  | Enable logging of request bodies      | false      | `govisual.WithRequestBodyLogging(true)`           |
 | `WithResponseBodyLogging(bool)` | Enable logging of response bodies     | false      | `govisual.WithResponseBodyLogging(true)`          |
 | `WithIgnorePaths(...string)`    | Paths to exclude from logging         | []         | `govisual.WithIgnorePaths("/health", "/metrics")` |
+| `WithMaxBodyBytes(int)`         | Cap on captured body size in bytes (0 = 1 MiB default, negative = unbounded) | 1 MiB | `govisual.WithMaxBodyBytes(64 << 10)` |
+| `WithShutdownContext(ctx)`      | Release storage and telemetry resources when the context is cancelled | none | `govisual.WithShutdownContext(ctx)` |
+
+### Dashboard Security
+
+| Option                              | Description                                                        | Default  | Example                                        |
+| ----------------------------------- | ------------------------------------------------------------------ | -------- | ---------------------------------------------- |
+| `WithLocalhostOnly()`               | Only allow dashboard requests from loopback addresses              | off      | `govisual.WithLocalhostOnly()`                 |
+| `WithBasicAuth(user, pass)`         | Protect the dashboard with HTTP Basic Auth (constant-time compare) | off      | `govisual.WithBasicAuth("admin", "secret")`    |
+| `WithDashboardAuth(fn)`             | Custom auth check run on every dashboard request                   | off      | `govisual.WithDashboardAuth(myCheck)`          |
+| `WithReplayEnabled(bool)`           | Enable the request replay endpoint (SSRF primitive — keep it gated) | disabled | `govisual.WithReplayEnabled(true)`             |
+| `WithSystemInfo(...string)`         | Enable the system-info endpoint; env vars shown only if allowlisted | disabled | `govisual.WithSystemInfo("GOPATH")`            |
+
+### Profiling Options
+
+| Option                            | Description                                | Default | Example                                              |
+| --------------------------------- | ------------------------------------------ | ------- | ---------------------------------------------------- |
+| `WithProfiling(bool)`             | Enable per-request CPU/memory profiling    | false   | `govisual.WithProfiling(true)`                       |
+| `WithProfileType(type)`           | Which profiles to collect                  | all     | `govisual.WithProfileType(profiling.ProfileCPU)`     |
+| `WithProfileThreshold(duration)`  | Only keep profiles for requests slower than this | 10ms | `govisual.WithProfileThreshold(50 * time.Millisecond)` |
+| `WithMaxProfileMetrics(int)`      | Maximum number of profile records to keep  | 1000    | `govisual.WithMaxProfileMetrics(500)`                |
 
 ### Storage Options
 
@@ -64,6 +85,18 @@ handler := govisual.Wrap(
 handler := govisual.Wrap(
     mux,
     govisual.WithDashboardPath("/__debug"),
+)
+```
+
+### Secured Dashboard
+
+```go
+handler := govisual.Wrap(
+    mux,
+    govisual.WithLocalhostOnly(),
+    govisual.WithBasicAuth("admin", "secret"),
+    govisual.WithReplayEnabled(true),
+    govisual.WithSystemInfo("GOPATH", "GOOS"),
 )
 ```
 
