@@ -54,6 +54,10 @@ type Metrics struct {
 	CPUProfile       []byte                   `json:"-"` // Raw CPU profile data
 	HeapProfile      []byte                   `json:"-"` // Raw heap profile data
 
+	// Baseline of runtime.MemStats.TotalAlloc at StartProfiling, used to
+	// compute MemoryTotalAlloc as a delta.
+	totalAllocStart uint64
+
 	mu sync.Mutex
 }
 
@@ -181,6 +185,7 @@ func (p *Profiler) StartProfiling(ctx context.Context, requestID string) context
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
 		metrics.MemoryAlloc = m.Alloc
+		metrics.totalAllocStart = m.TotalAlloc
 		metrics.NumGC = m.NumGC
 		metrics.GCPauseTotal = time.Duration(m.PauseTotalNs)
 	}
@@ -240,7 +245,9 @@ func (p *Profiler) EndProfiling(ctx context.Context) *Metrics {
 	if p.hasProfile(ProfileMemory) {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
-		metrics.MemoryTotalAlloc = m.Alloc - metrics.MemoryAlloc
+		// TotalAlloc is monotonic, unlike Alloc, which shrinks after GC and
+		// would underflow here.
+		metrics.MemoryTotalAlloc = m.TotalAlloc - metrics.totalAllocStart
 		metrics.MemoryAlloc = m.Alloc
 
 		// Calculate GC impact
