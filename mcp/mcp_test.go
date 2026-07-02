@@ -207,3 +207,57 @@ func TestHandlerGates(t *testing.T) {
 		t.Fatalf("authorized initialize: got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestAwaitRequest(t *testing.T) {
+	st := store.WithNotify(store.NewMemory(50))
+	s := connect(t, st, nil)
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		st.Add(&store.RequestLog{
+			ID: "late-1", Timestamp: time.Now(), Method: "POST", Path: "/api/orders",
+			StatusCode: 500, Host: "localhost:8080",
+		})
+	}()
+
+	out := call(t, s, "await_request", map[string]any{
+		"path_contains": "/api/orders", "status_min": 500, "timeout_seconds": 5,
+	})
+	if out["id"] != "late-1" {
+		t.Fatalf("expected late-1, got %v", out["id"])
+	}
+}
+
+func TestCopyAsCurl(t *testing.T) {
+	s := connect(t, seedStore(t), nil)
+	out := call(t, s, "copy_as_curl", map[string]any{"id": "ok-2"})
+	cmd := out["command"].(string)
+	for _, want := range []string{"curl", "-X POST", `{"name":"alice"}`, "http://localhost:8080/api/users"} {
+		if !strings.Contains(cmd, want) {
+			t.Fatalf("curl command missing %q: %s", want, cmd)
+		}
+	}
+}
+
+func TestSaveAsTest(t *testing.T) {
+	s := connect(t, seedStore(t), nil)
+	out := call(t, s, "save_as_test", map[string]any{"id": "bad-1"})
+	code := out["code"].(string)
+	for _, want := range []string{"func TestGetApiOrders(t *testing.T)", `httptest.NewRequest("GET", "/api/orders", nil)`, "rec.Code != 500"} {
+		if !strings.Contains(code, want) {
+			t.Fatalf("generated test missing %q:\n%s", want, code)
+		}
+	}
+}
+
+func TestClearRequests(t *testing.T) {
+	st := seedStore(t)
+	s := connect(t, st, nil)
+	out := call(t, s, "clear_requests", struct{}{})
+	if out["cleared"] != true {
+		t.Fatalf("expected cleared, got %+v", out)
+	}
+	if len(st.GetAll()) != 0 {
+		t.Fatal("store not cleared")
+	}
+}

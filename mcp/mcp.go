@@ -77,6 +77,7 @@ func newServer(st store.Store, cfg *config) *sdk.Server {
 	srv := sdk.NewServer(&sdk.Implementation{Name: "govisual", Version: "2.0.0"}, nil)
 	registerReadTools(srv, st)
 	registerReplayTools(srv, st, cfg)
+	registerActionTools(srv, st)
 	return srv
 }
 

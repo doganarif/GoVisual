@@ -30,7 +30,11 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		requestStore = store.NewMemory(config.MaxRequests)
 	}
 	// Notification lets the dashboard push live updates instead of polling.
-	requestStore = store.WithNotify(requestStore)
+	// Callers that already wrapped their store (e.g. to share it with the
+	// MCP handler's await_request) are left alone.
+	if _, ok := requestStore.(*store.NotifyingStore); !ok {
+		requestStore = store.WithNotify(requestStore)
+	}
 
 	var profiler *profiling.Profiler
 	if config.EnableProfiling {
