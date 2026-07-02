@@ -2,6 +2,7 @@ package profiling
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"runtime"
 	"sync"
@@ -75,4 +76,36 @@ func TestMemoryTotalAllocSurvivesGC(t *testing.T) {
 			t.Fatalf("unexpected memory bottleneck: %+v", b)
 		}
 	}
+}
+
+func TestEndProfilingRacesWithRecorders(t *testing.T) {
+	profiler := NewProfiler(10)
+	profiler.SetProfileType(ProfileMemory)
+	profiler.SetThreshold(0)
+
+	ctx := profiler.StartProfiling(context.Background(), "req-race")
+
+	// A leaked goroutine that keeps recording while the request finishes.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 5000; i++ {
+			profiler.RecordSQLQuery(ctx, "SELECT 1", time.Millisecond, 1, nil)
+			profiler.RecordHTTPCall(ctx, "GET", "http://example", time.Millisecond, 200, 0)
+		}
+	}()
+
+	metrics := profiler.EndProfiling(ctx)
+	if metrics == nil {
+		t.Fatal("expected metrics, got nil")
+	}
+	for i := 0; i < 20; i++ {
+		for _, m := range profiler.GetAllMetrics() {
+			if _, err := json.Marshal(m); err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+		}
+	}
+	wg.Wait()
 }

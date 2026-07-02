@@ -215,15 +215,18 @@ func (p *Profiler) EndProfiling(ctx context.Context) *Metrics {
 		return nil
 	}
 
+	metrics.mu.Lock()
 	metrics.EndTime = time.Now()
 	metrics.Duration = metrics.EndTime.Sub(metrics.StartTime)
+	duration := metrics.Duration
+	metrics.mu.Unlock()
 
 	// Skip profiling if below threshold
 	p.mu.RLock()
 	threshold := p.threshold
 	p.mu.RUnlock()
 
-	if metrics.Duration < threshold {
+	if duration < threshold {
 		// Stop CPU profiling if this request started it
 		p.stopCPUProfilingIfActive(metrics.RequestID)
 		p.removeMetrics(metrics.RequestID)
@@ -231,14 +234,22 @@ func (p *Profiler) EndProfiling(ctx context.Context) *Metrics {
 	}
 
 	// Stop CPU profiling and capture data if this request started it
+	var cpuProfile []byte
 	if p.hasProfile(ProfileCPU) {
 		p.cpuProfileMu.Lock()
 		if p.activeCPUProfile != nil && p.activeCPUProfile.requestID == metrics.RequestID && p.activeCPUProfile.started {
 			pprof.StopCPUProfile()
-			metrics.CPUProfile = p.activeCPUProfile.buffer.Bytes()
+			cpuProfile = p.activeCPUProfile.buffer.Bytes()
 			p.activeCPUProfile = nil
 		}
 		p.cpuProfileMu.Unlock()
+	}
+
+	// A leaked handler goroutine can still be calling Record*; every
+	// mutation from here on stays under the metrics lock.
+	metrics.mu.Lock()
+	if cpuProfile != nil {
+		metrics.CPUProfile = cpuProfile
 	}
 
 	// Capture final memory stats
@@ -265,8 +276,42 @@ func (p *Profiler) EndProfiling(ctx context.Context) *Metrics {
 
 	// Analyze bottlenecks
 	p.analyzeBottlenecks(metrics)
+	metrics.mu.Unlock()
 
-	return metrics
+	return metrics.snapshot()
+}
+
+// snapshot returns a copy that is safe to hand outside the profiler while
+// in-flight Record* calls may still mutate the original.
+func (m *Metrics) snapshot() *Metrics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c := &Metrics{
+		RequestID:        m.RequestID,
+		StartTime:        m.StartTime,
+		EndTime:          m.EndTime,
+		Duration:         m.Duration,
+		CPUTime:          m.CPUTime,
+		MemoryAlloc:      m.MemoryAlloc,
+		MemoryTotalAlloc: m.MemoryTotalAlloc,
+		NumGoroutines:    m.NumGoroutines,
+		NumGC:            m.NumGC,
+		GCPauseTotal:     m.GCPauseTotal,
+		CPUProfile:       m.CPUProfile,
+		HeapProfile:      m.HeapProfile,
+		totalAllocStart:  m.totalAllocStart,
+	}
+	if m.FunctionTimings != nil {
+		c.FunctionTimings = make(map[string]time.Duration, len(m.FunctionTimings))
+		for k, v := range m.FunctionTimings {
+			c.FunctionTimings[k] = v
+		}
+	}
+	c.SQLQueries = append([]SQLQueryMetric(nil), m.SQLQueries...)
+	c.HTTPCalls = append([]HTTPCallMetric(nil), m.HTTPCalls...)
+	c.Bottlenecks = append([]Bottleneck(nil), m.Bottlenecks...)
+	return c
 }
 
 // RecordFunction records the timing of a function
@@ -349,25 +394,30 @@ func (p *Profiler) RecordHTTPCall(ctx context.Context, method, url string, durat
 	}
 }
 
-// GetMetrics retrieves metrics for a request
+// GetMetrics retrieves a snapshot of the metrics for a request
 func (p *Profiler) GetMetrics(requestID string) (*Metrics, bool) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
 	elem, ok := p.metrics[requestID]
+	p.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
-	return elem.Value.(*Metrics), true
+	return elem.Value.(*Metrics).snapshot(), true
 }
 
-// GetAllMetrics retrieves all stored metrics in FIFO insertion order (oldest first).
+// GetAllMetrics retrieves snapshots of all stored metrics in FIFO insertion
+// order (oldest first).
 func (p *Profiler) GetAllMetrics() []*Metrics {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	result := make([]*Metrics, 0, p.order.Len())
+	live := make([]*Metrics, 0, p.order.Len())
 	for e := p.order.Front(); e != nil; e = e.Next() {
-		result = append(result, e.Value.(*Metrics))
+		live = append(live, e.Value.(*Metrics))
+	}
+	p.mu.RUnlock()
+
+	result := make([]*Metrics, len(live))
+	for i, m := range live {
+		result[i] = m.snapshot()
 	}
 	return result
 }
@@ -380,7 +430,8 @@ func (p *Profiler) ClearMetrics() {
 	p.order = list.New()
 }
 
-// analyzeBottlenecks analyzes metrics to identify bottlenecks
+// analyzeBottlenecks analyzes metrics to identify bottlenecks.
+// The caller must hold metrics.mu.
 func (p *Profiler) analyzeBottlenecks(metrics *Metrics) {
 	// Analyze SQL queries
 	var totalSQLTime time.Duration
