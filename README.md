@@ -109,7 +109,7 @@ http.ListenAndServe(":8080", root)
 claude mcp add govisual --transport http http://localhost:8080/mcp
 ```
 
-Tools: `get_last_error`, `list_requests`, `get_request`, `search_requests`, `get_stats`, `get_debug_context`, `replay_request`, `diff_replay`. Responses are token-aware (bounded lists, capped body excerpts). The endpoint is loopback-only by default and replays can only target your own app, never arbitrary hosts.
+Tools: `get_last_error`, `list_requests`, `get_request`, `search_requests`, `get_stats`, `get_debug_context`, `replay_request`, `diff_replay`, `await_request`, `save_as_test`, `copy_as_curl`, `clear_requests`. Responses are token-aware (bounded lists, capped body excerpts). The endpoint is loopback-only by default and replays can only target your own app, never arbitrary hosts.
 
 ## SQL Query Capture
 
