@@ -2203,6 +2203,164 @@ button, a, input, select, textarea {
   }
 }
 
+/* Dark theme.
+ *
+ * The rest of the app uses Tailwind's zinc palette directly, so instead of
+ * threading `dark:` variants through every component we override the
+ * generated utility classes when `.dark` is on <html>. Keep in sync with
+ * the colors listed in DetailPane / RequestList / RailNav.
+ */
+
+html.dark {
+  color-scheme: dark;
+  background: #09090b;
+  color: #e4e4e7;
+}
+
+html.dark body {
+  background: #09090b;
+}
+
+html.dark .bg-white {
+  background-color: #0f0f11 !important;
+}
+
+html.dark .bg-zinc-50\/40 {
+  background-color: rgba(24, 24, 27, 0.5) !important;
+}
+
+html.dark .bg-zinc-50\/50 {
+  background-color: rgba(24, 24, 27, 0.6) !important;
+}
+
+html.dark .bg-zinc-50 {
+  background-color: #18181b !important;
+}
+
+html.dark .bg-zinc-100 {
+  background-color: #27272a !important;
+}
+
+html.dark .bg-zinc-900 {
+  background-color: #e4e4e7 !important;
+  color: #09090b !important;
+}
+
+html.dark .text-zinc-900 {
+  color: #e4e4e7 !important;
+}
+
+html.dark .text-zinc-700 {
+  color: #d4d4d8 !important;
+}
+
+html.dark .text-zinc-500 {
+  color: #a1a1aa !important;
+}
+
+html.dark .text-zinc-400 {
+  color: #71717a !important;
+}
+
+html.dark .text-white {
+  color: #09090b !important;
+}
+
+html.dark .border-zinc-200 {
+  border-color: #27272a !important;
+}
+
+html.dark .border-zinc-100 {
+  border-color: #1f1f22 !important;
+}
+
+html.dark .border-zinc-900 {
+  border-color: #e4e4e7 !important;
+}
+
+html.dark .divide-zinc-100 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #1f1f22 !important;
+}
+
+html.dark .hover\:bg-zinc-50:hover {
+  background-color: #27272a !important;
+}
+
+html.dark .hover\:bg-zinc-100:hover {
+  background-color: #3f3f46 !important;
+}
+
+html.dark .hover\:text-zinc-900:hover {
+  color: #e4e4e7 !important;
+}
+
+/* Status pills — keep the hue but darken the tinted backgrounds so they
+ * read against the dark surface. */
+
+html.dark .bg-blue-50 {
+  background-color: rgba(37, 99, 235, 0.15) !important;
+}
+
+html.dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+}
+
+html.dark .bg-amber-50 {
+  background-color: rgba(217, 119, 6, 0.15) !important;
+}
+
+html.dark .bg-orange-50 {
+  background-color: rgba(234, 88, 12, 0.15) !important;
+}
+
+html.dark .bg-red-50 {
+  background-color: rgba(220, 38, 38, 0.15) !important;
+}
+
+html.dark .bg-red-50\/50 {
+  background-color: rgba(220, 38, 38, 0.1) !important;
+}
+
+html.dark .border-red-200 {
+  border-color: rgba(220, 38, 38, 0.3) !important;
+}
+
+html.dark .text-blue-700 {
+  color: #93c5fd !important;
+}
+
+html.dark .text-blue-600 {
+  color: #93c5fd !important;
+}
+
+html.dark .text-emerald-700 {
+  color: #6ee7b7 !important;
+}
+
+html.dark .text-amber-700 {
+  color: #fcd34d !important;
+}
+
+html.dark .text-orange-700 {
+  color: #fdba74 !important;
+}
+
+html.dark .text-orange-600 {
+  color: #fdba74 !important;
+}
+
+html.dark .text-red-700 {
+  color: #fca5a5 !important;
+}
+
+html.dark .text-red-600 {
+  color: #fca5a5 !important;
+}
+
+html.dark .text-red-800 {
+  color: #fca5a5 !important;
+}
+
 .data-\[state\=open\]\:animate-in[data-state="open"] {
   animation-fill-mode: both;
   animation-duration: 0.5s;

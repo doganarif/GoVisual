@@ -4,6 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GoVisual Dashboard</title>
+    <script>
+      // Apply the stored theme before first paint to avoid a flash of the wrong colors.
+      (function () {
+        try {
+          var t = localStorage.getItem('govisual:theme');
+          if (t !== 'light' && t !== 'dark') {
+            t = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          if (t === 'dark') document.documentElement.classList.add('dark');
+        } catch (e) { /* private mode; leave the default */ }
+      })();
+    </script>
     <link rel="stylesheet" href="styles.css">
     <style>
         /* Critical CSS for initial load */
