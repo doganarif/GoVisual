@@ -419,7 +419,13 @@ func (p *Profiler) RecordHTTPCall(ctx context.Context, method, url string, durat
 	if !p.enabled.Load() {
 		return
 	}
+	RecordHTTP(ctx, method, url, duration, status, size)
+}
 
+// RecordHTTP attaches an outbound HTTP call to the request profile carried
+// by ctx. Without an active profile it is a no-op, so it is safe to call
+// unconditionally — this is what the WrapTransport instrumentation uses.
+func RecordHTTP(ctx context.Context, method, url string, duration time.Duration, status int, size int64) {
 	metrics, ok := ctx.Value(profileContextKey{}).(*Metrics)
 	if !ok || metrics == nil {
 		return
