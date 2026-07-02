@@ -80,16 +80,35 @@ handler := govisual.Wrap(
     govisual.WithProfiling(true),               // Per-request CPU/memory profiling
     govisual.WithProfileThreshold(50*time.Millisecond), // Only profile slow requests
 
-    govisual.WithShutdownContext(ctx),          // Release storage/telemetry when ctx is cancelled
-
-    govisual.WithOpenTelemetry(true),           // Enable OpenTelemetry
-    govisual.WithServiceName("my-service"),     // Service name for OTel
-    govisual.WithServiceVersion("1.0.0"),       // Service version
-    govisual.WithOTelEndpoint("localhost:4317"), // OTLP endpoint
+    govisual.WithShutdownContext(ctx),          // Release the store when ctx is cancelled
 
     // Storage (in-memory by default; see Storage Backends below)
     govisual.WithStore(myStore),
 )
+```
+
+## OpenTelemetry
+
+Tracing lives in its own module so the OTel SDK and gRPC stay out of builds that don't use them:
+
+```bash
+go get github.com/doganarif/govisual/telemetry
+```
+
+```go
+traced, shutdown, err := telemetry.Wrap(mux, telemetry.Config{
+    ServiceName:    "my-service",
+    ServiceVersion: "1.0.0",
+    Endpoint:       "localhost:4317",
+    Insecure:       true,
+    Exporter:       "otlp", // or "stdout", "noop"
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer shutdown(context.Background())
+
+handler := govisual.Wrap(traced) // wrapping the traced mux keeps the dashboard out of your traces
 ```
 
 ## Dashboard Security

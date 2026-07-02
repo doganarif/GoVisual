@@ -1,6 +1,8 @@
-package middleware
+package telemetry
 
 import (
+	"context"
+
 	"net/http"
 
 	"go.opentelemetry.io/otel"
@@ -9,17 +11,17 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// OTelMiddleware wraps an http.Handler with OpenTelemetry instrumentation
-type OTelMiddleware struct {
+// Middleware wraps an http.Handler with OpenTelemetry instrumentation
+type Middleware struct {
 	tracer         trace.Tracer
 	propagator     propagation.TextMapPropagator
 	handler        http.Handler
 	serviceVersion string
 }
 
-// NewOTelMiddleware creates a new OpenTelemetry middleware
-func NewOTelMiddleware(handler http.Handler, serviceName, serviceVersion string) *OTelMiddleware {
-	return &OTelMiddleware{
+// NewMiddleware creates a new OpenTelemetry middleware
+func NewMiddleware(handler http.Handler, serviceName, serviceVersion string) *Middleware {
+	return &Middleware{
 		tracer:         otel.Tracer(serviceName),
 		propagator:     otel.GetTextMapPropagator(),
 		handler:        handler,
@@ -28,7 +30,7 @@ func NewOTelMiddleware(handler http.Handler, serviceName, serviceVersion string)
 }
 
 // ServeHTTP implements the http.Handler interface
-func (m *OTelMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Extract any existing context from the request
 	ctx := r.Context()
 	ctx = m.propagator.Extract(ctx, propagation.HeaderCarrier(r.Header))
@@ -75,4 +77,16 @@ func (wrw *wrappedResponseWriter) WriteHeader(statusCode int) {
 // Write captures writes to the response
 func (wrw *wrappedResponseWriter) Write(b []byte) (int, error) {
 	return wrw.ResponseWriter.Write(b)
+}
+
+// Wrap initializes the exporter from cfg and returns handler instrumented
+// with tracing, plus a shutdown function that flushes pending spans. To keep
+// govisual's own dashboard out of your traces, wrap the application handler
+// first and pass the result to govisual.Wrap.
+func Wrap(handler http.Handler, cfg Config) (http.Handler, func(context.Context) error, error) {
+	shutdown, err := InitTracer(context.Background(), cfg)
+	if err != nil {
+		return handler, nil, err
+	}
+	return NewMiddleware(handler, cfg.ServiceName, cfg.ServiceVersion), shutdown, nil
 }

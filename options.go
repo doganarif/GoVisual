@@ -33,19 +33,6 @@ type Config struct {
 
 	IgnorePaths []string
 
-	// OpenTelemetry configuration
-	EnableOpenTelemetry bool
-
-	ServiceName string
-
-	ServiceVersion string
-
-	OTelEndpoint string
-
-	OTelInsecure bool
-
-	OTelExporter string
-
 	// Store is the storage backend for captured requests. Nil means an
 	// in-memory store bounded by MaxRequests. Database-backed stores live in
 	// their own modules under store/ (postgres, redis, sqlite, mongodb).
@@ -89,10 +76,9 @@ type Config struct {
 	ExposeEnvVars []string
 
 	// ShutdownContext, if set, triggers graceful shutdown of govisual-owned
-	// resources (storage backends, OpenTelemetry tracer provider) when the
-	// context is cancelled. This replaces the prior behavior of registering a
-	// global signal handler that called os.Exit — a library has no business
-	// killing the host process.
+	// resources (the storage backend) when the context is cancelled. This
+	// replaces the prior behavior of registering a global signal handler that
+	// called os.Exit — a library has no business killing the host process.
 	ShutdownContext context.Context
 }
 
@@ -145,52 +131,9 @@ func WithIgnorePaths(patterns ...string) Option {
 	}
 }
 
-// WithOpenTelemetry enables or disables OpenTelemetry instrumentation
-func WithOpenTelemetry(enabled bool) Option {
-	return func(c *Config) {
-		c.EnableOpenTelemetry = enabled
-	}
-}
-
-// WithServiceName sets the service name for OpenTelemetry
-func WithServiceName(name string) Option {
-	return func(c *Config) {
-		c.ServiceName = name
-	}
-}
-
-// WithServiceVersion sets the service version for OpenTelemetry
-func WithServiceVersion(version string) Option {
-	return func(c *Config) {
-		c.ServiceVersion = version
-	}
-}
-
-// WithOTelEndpoint sets the OTLP endpoint for exporting telemetry data
-func WithOTelEndpoint(endpoint string) Option {
-	return func(c *Config) {
-		c.OTelEndpoint = endpoint
-	}
-}
-
-// WithOTelInsecure sets whether to use an insecure connection for OTLP
-func WithOTelInsecure(insecure bool) Option {
-	return func(c *Config) {
-		c.OTelInsecure = insecure
-	}
-}
-
-// WithOTelExporter sets the type of exporter to use.
-// Valid values: "otlp" (default), "stdout" (for debugging), "noop" (for benchmarking)
-func WithOTelExporter(exporterType string) Option {
-	return func(c *Config) {
-		c.OTelExporter = exporterType
-	}
-}
-
 // WithStore sets the storage backend for captured requests. Construct one
 // from a storage module, e.g. postgres.New(...) from
-// github.com/doganarif/govisual/v2/store/postgres. Without this option an
+// github.com/doganarif/govisual/store/postgres. Without this option an
 // in-memory store bounded by WithMaxRequests is used.
 func WithStore(s store.Store) Option {
 	return func(c *Config) {
@@ -304,8 +247,8 @@ func WithSystemInfo(envAllowlist ...string) Option {
 	}
 }
 
-// WithShutdownContext wires govisual's internal cleanup (storage backends,
-// OpenTelemetry shutdown) to a caller-provided context. When the context is
+// WithShutdownContext wires govisual's internal cleanup (the storage
+// backend) to a caller-provided context. When the context is
 // cancelled, govisual releases its resources. Replaces the prior behavior of
 // installing a global signal handler that called os.Exit.
 //
@@ -329,12 +272,6 @@ func defaultConfig() *Config {
 		LogResponseBody:     false,
 		MaxBodyBytes:        0, // 0 => use middleware.DefaultMaxBodyBytes
 		IgnorePaths:         []string{},
-		EnableOpenTelemetry: false,
-		ServiceName:         "govisual",
-		ServiceVersion:      "dev",
-		OTelEndpoint:        "localhost:4317",
-		OTelInsecure:        true,
-		OTelExporter:        "otlp",
 		EnableProfiling:     false,
 		ProfileType:         profiling.ProfileAll,
 		ProfileThreshold:    10 * time.Millisecond,
