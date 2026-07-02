@@ -121,6 +121,196 @@ Sets path patterns to ignore from request logging.
 govisual.WithIgnorePaths("/health", "/metrics", "/static/*")
 ```
 
+#### WithMaxBodyBytes
+
+```go
+func WithMaxBodyBytes(n int) Option
+```
+
+Caps the captured request and response body size. `0` uses the package default (1 MiB), a positive value sets an explicit cap in bytes, and a negative value disables the cap.
+
+**Parameters:**
+
+- `n int`: Body capture cap in bytes
+
+**Example:**
+
+```go
+govisual.WithMaxBodyBytes(64 << 10)
+```
+
+### Dashboard Security Options
+
+#### WithLocalhostOnly
+
+```go
+func WithLocalhostOnly() Option
+```
+
+Restricts the dashboard to requests originating from a loopback address.
+
+**Example:**
+
+```go
+govisual.WithLocalhostOnly()
+```
+
+#### WithBasicAuth
+
+```go
+func WithBasicAuth(username, password string) Option
+```
+
+Protects the dashboard with HTTP Basic Auth using a constant-time comparison.
+
+**Parameters:**
+
+- `username string`: Expected username
+- `password string`: Expected password
+
+**Example:**
+
+```go
+govisual.WithBasicAuth("admin", "secret")
+```
+
+#### WithDashboardAuth
+
+```go
+func WithDashboardAuth(fn DashboardAuth) Option
+```
+
+Installs a custom authentication function. It runs on every dashboard request and must return true to allow access.
+
+**Parameters:**
+
+- `fn DashboardAuth`: `func(*http.Request) bool`
+
+**Example:**
+
+```go
+govisual.WithDashboardAuth(func(r *http.Request) bool {
+    return r.Header.Get("X-Debug-Token") == "s3cret"
+})
+```
+
+#### WithReplayEnabled
+
+```go
+func WithReplayEnabled(enabled bool) Option
+```
+
+Enables the dashboard's replay endpoint. Disabled by default: the endpoint makes the server perform outbound HTTP requests (an SSRF primitive), so only enable it behind authentication and/or localhost-only access.
+
+**Parameters:**
+
+- `enabled bool`: Whether replay is allowed
+
+**Example:**
+
+```go
+govisual.WithReplayEnabled(true)
+```
+
+#### WithSystemInfo
+
+```go
+func WithSystemInfo(envAllowlist ...string) Option
+```
+
+Enables the dashboard's system-info endpoint. Environment variables are only exposed when their names are passed here; with no names, only memory and runtime info is shown.
+
+**Parameters:**
+
+- `envAllowlist ...string`: Environment variable names to expose
+
+**Example:**
+
+```go
+govisual.WithSystemInfo("GOPATH", "GOOS")
+```
+
+### Profiling Options
+
+#### WithProfiling
+
+```go
+func WithProfiling(enabled bool) Option
+```
+
+Enables per-request performance profiling (CPU, memory, goroutines).
+
+**Example:**
+
+```go
+govisual.WithProfiling(true)
+```
+
+#### WithProfileType
+
+```go
+func WithProfileType(profileType profiling.ProfileType) Option
+```
+
+Sets which profile types to collect. Defaults to all.
+
+**Example:**
+
+```go
+govisual.WithProfileType(profiling.ProfileCPU)
+```
+
+#### WithProfileThreshold
+
+```go
+func WithProfileThreshold(threshold time.Duration) Option
+```
+
+Only keeps profiles for requests slower than the threshold. Defaults to 10ms.
+
+**Example:**
+
+```go
+govisual.WithProfileThreshold(50 * time.Millisecond)
+```
+
+#### WithMaxProfileMetrics
+
+```go
+func WithMaxProfileMetrics(max int) Option
+```
+
+Sets the maximum number of profile records to keep. Defaults to 1000.
+
+**Example:**
+
+```go
+govisual.WithMaxProfileMetrics(500)
+```
+
+### Lifecycle Options
+
+#### WithShutdownContext
+
+```go
+func WithShutdownContext(ctx context.Context) Option
+```
+
+Wires govisual's internal cleanup (storage backends, OpenTelemetry shutdown) to a caller-provided context: when the context is cancelled, govisual releases its resources. GoVisual does not install signal handlers — shutdown stays under the host application's control.
+
+**Parameters:**
+
+- `ctx context.Context`: Context whose cancellation triggers cleanup
+
+**Example:**
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+defer stop()
+
+handler := govisual.Wrap(mux, govisual.WithShutdownContext(ctx))
+```
+
 ### Storage Options
 
 #### WithMemoryStorage
