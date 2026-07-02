@@ -2,9 +2,11 @@ package middleware
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/doganarif/govisual/v2/internal/profiling"
@@ -76,53 +78,73 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 		}
 
 		start := time.Now()
-		handler.ServeHTTP(resWriter, r)
-		reqLog.Duration = time.Since(start).Milliseconds()
+		finish := func(panicErr error) {
+			reqLog.Duration = time.Since(start).Milliseconds()
 
-		if profiler != nil {
-			if metrics := profiler.EndProfiling(ctx); metrics != nil {
-				reqLog.PerformanceMetrics = metrics.Model()
-			}
-		}
-
-		reqLog.StatusCode = resWriter.status()
-
-		tracer.EndTrace(nil)
-		tracer.Complete()
-
-		reqLog.MiddlewareTrace = make([]map[string]interface{}, 0)
-		for _, trace := range tracer.GetTraces() {
-			traceMap := map[string]interface{}{
-				"name":       trace.Name,
-				"type":       trace.Type,
-				"start_time": trace.StartTime,
-				"end_time":   trace.EndTime,
-				"duration":   trace.Duration.Milliseconds(),
-				"status":     trace.Status,
-				"details":    trace.Details,
-				"children":   trace.Children,
-			}
-			if trace.Error != "" {
-				traceMap["error"] = trace.Error
-			}
-			reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, traceMap)
-		}
-
-		if v := r.Context().Value(MiddlewareStackKey{}); v != nil {
-			if middlewareInfo, ok := v.(map[string]interface{}); ok {
-				if stack, ok := middlewareInfo["stack"].([]map[string]interface{}); ok {
-					reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, stack...)
+			if profiler != nil {
+				if metrics := profiler.EndProfiling(ctx); metrics != nil {
+					reqLog.PerformanceMetrics = metrics.Model()
 				}
 			}
+
+			reqLog.StatusCode = resWriter.status()
+			if panicErr != nil && !resWriter.wrote() {
+				// The handler died before writing; the client effectively
+				// sees a failed request.
+				reqLog.StatusCode = http.StatusInternalServerError
+			}
+
+			tracer.EndTrace(panicErr)
+			tracer.Complete()
+
+			reqLog.MiddlewareTrace = make([]map[string]interface{}, 0)
+			for _, trace := range tracer.GetTraces() {
+				traceMap := map[string]interface{}{
+					"name":       trace.Name,
+					"type":       trace.Type,
+					"start_time": trace.StartTime,
+					"end_time":   trace.EndTime,
+					"duration":   trace.Duration.Milliseconds(),
+					"status":     trace.Status,
+					"details":    trace.Details,
+					"children":   trace.Children,
+				}
+				if trace.Error != "" {
+					traceMap["error"] = trace.Error
+				}
+				reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, traceMap)
+			}
+
+			if v := r.Context().Value(MiddlewareStackKey{}); v != nil {
+				if middlewareInfo, ok := v.(map[string]interface{}); ok {
+					if stack, ok := middlewareInfo["stack"].([]map[string]interface{}); ok {
+						reqLog.MiddlewareTrace = append(reqLog.MiddlewareTrace, stack...)
+					}
+				}
+			}
+
+			if logResponseBody {
+				reqLog.ResponseBody = resWriter.body()
+			}
+
+			reqLog.Logs = collector.Snapshot()
+
+			_ = st.Add(reqLog)
 		}
 
-		if logResponseBody {
-			reqLog.ResponseBody = resWriter.body()
-		}
+		defer func() {
+			if rec := recover(); rec != nil {
+				reqLog.Error = fmt.Sprintf("panic: %v", rec)
+				reqLog.PanicStack = string(debug.Stack())
+				finish(fmt.Errorf("panic: %v", rec))
+				// Re-panic so recovery middleware and net/http behave exactly
+				// as they would without govisual in the chain.
+				panic(rec)
+			}
+		}()
 
-		reqLog.Logs = collector.Snapshot()
-
-		_ = st.Add(reqLog)
+		handler.ServeHTTP(resWriter, r)
+		finish(nil)
 	})
 }
 

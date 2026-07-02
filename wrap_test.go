@@ -73,3 +73,53 @@ func TestSampleRateDefaultCapturesEverything(t *testing.T) {
 		t.Fatalf("default sampling missed a request: %s", body)
 	}
 }
+
+func TestPanicIsCapturedAndRepropagated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/boom", func(w http.ResponseWriter, r *http.Request) {
+		panic("kaboom")
+	})
+	h := Wrap(mux)
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("panic must propagate through govisual")
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
+	}()
+
+	body := capturedRequests(t, h)
+	if !strings.Contains(body, "panic: kaboom") {
+		t.Fatalf("panic not recorded: %s", body)
+	}
+	if !strings.Contains(body, "PanicStack") || !strings.Contains(body, "boom") {
+		t.Fatalf("stack not recorded: %s", body)
+	}
+	if !strings.Contains(body, `"StatusCode":500`) {
+		t.Fatalf("expected 500 on panicked request: %s", body)
+	}
+}
+
+func TestPanicIsCapturedWithProfiling(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/boom", func(w http.ResponseWriter, r *http.Request) {
+		panic("kaboom")
+	})
+	h := Wrap(mux, WithProfiling(true))
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("panic must propagate through govisual")
+			}
+		}()
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
+	}()
+
+	body := capturedRequests(t, h)
+	if !strings.Contains(body, "panic: kaboom") || !strings.Contains(body, `"StatusCode":500`) {
+		t.Fatalf("panic not recorded under profiling: %s", body)
+	}
+}

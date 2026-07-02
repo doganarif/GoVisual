@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -84,6 +86,13 @@ func (w *responseWriter) status() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.statusCode
+}
+
+// wrote reports whether the handler wrote a response header.
+func (w *responseWriter) wrote() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.wroteHeader
 }
 
 // body returns a snapshot of the captured response body, or "" when body
@@ -189,40 +198,61 @@ func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logRes
 		}
 
 		start := time.Now()
+		finish := func(panicked bool) {
+			reqLog.Duration = time.Since(start).Milliseconds()
+			reqLog.StatusCode = resWriter.status()
+			if panicked && !resWriter.wrote() {
+				// The handler died before writing; the client effectively
+				// sees a failed request.
+				reqLog.StatusCode = http.StatusInternalServerError
+			}
+
+			// Extract user-provided middleware-stack information from context
+			if v := r.Context().Value(MiddlewareStackKey{}); v != nil {
+				if middlewareInfo, ok := v.(map[string]interface{}); ok {
+					if stack, ok := middlewareInfo["stack"].([]map[string]interface{}); ok {
+						reqLog.MiddlewareTrace = stack
+					}
+				}
+			}
+
+			// Extract route trace information
+			if v := r.Context().Value(RouteTraceKey{}); v != nil {
+				if routeStr, ok := v.(string); ok {
+					var routeInfo map[string]interface{}
+					if err := json.Unmarshal([]byte(routeStr), &routeInfo); err == nil {
+						reqLog.RouteTrace = routeInfo
+					}
+				}
+			}
+
+			if logResponseBody {
+				reqLog.ResponseBody = resWriter.body()
+			}
+
+			reqLog.Logs = collector.Snapshot()
+
+			addToStore(st, reqLog)
+		}
+
+		defer func() {
+			if rec := recover(); rec != nil {
+				reqLog.Error = fmt.Sprintf("panic: %v", rec)
+				reqLog.PanicStack = string(debug.Stack())
+				finish(true)
+				// Re-panic so recovery middleware and net/http behave exactly
+				// as they would without govisual in the chain.
+				panic(rec)
+			}
+		}()
+
 		handler.ServeHTTP(resWriter, r)
-		reqLog.Duration = time.Since(start).Milliseconds()
-		reqLog.StatusCode = resWriter.status()
-
-		// Extract user-provided middleware-stack information from context
-		if v := r.Context().Value(MiddlewareStackKey{}); v != nil {
-			if middlewareInfo, ok := v.(map[string]interface{}); ok {
-				if stack, ok := middlewareInfo["stack"].([]map[string]interface{}); ok {
-					reqLog.MiddlewareTrace = stack
-				}
-			}
-		}
-
-		// Extract route trace information
-		if v := r.Context().Value(RouteTraceKey{}); v != nil {
-			if routeStr, ok := v.(string); ok {
-				var routeInfo map[string]interface{}
-				if err := json.Unmarshal([]byte(routeStr), &routeInfo); err == nil {
-					reqLog.RouteTrace = routeInfo
-				}
-			}
-		}
-
-		if logResponseBody {
-			reqLog.ResponseBody = resWriter.body()
-		}
-
-		reqLog.Logs = collector.Snapshot()
-
-		if err := st.Add(reqLog); err != nil {
-			// Storage errors are surfaced on the log entry's Error field so they
-			// remain visible to anyone inspecting the dashboard backend; we do
-			// not block the request path.
-			_ = err
-		}
+		finish(false)
 	})
+}
+
+// addToStore persists the entry. Storage errors are deliberately not allowed
+// to block or fail the request path.
+func addToStore(st store.Store, reqLog *store.RequestLog) {
+	_ = st.Add(reqLog)
 }

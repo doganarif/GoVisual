@@ -24,6 +24,7 @@ type RequestLog struct {
 	RouteTrace         map[string]interface{}   `json:"RouteTrace,omitempty" bson:"route_trace,omitempty"`
 	PerformanceMetrics *PerformanceMetrics      `json:"PerformanceMetrics,omitempty" bson:"performance_metrics,omitempty"`
 	Logs               []LogEntry               `json:"Logs,omitempty" bson:"logs,omitempty"`
+	PanicStack         string                   `json:"PanicStack,omitempty" bson:"panic_stack,omitempty"`
 }
 
 // LogEntry is a single application log line emitted while the request was
