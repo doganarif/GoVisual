@@ -12,7 +12,7 @@ package main
 import (
     "fmt"
     "net/http"
-    "github.com/doganarif/govisual"
+    "github.com/doganarif/govisual/v2"
 )
 
 func main() {

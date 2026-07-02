@@ -130,7 +130,7 @@ Application becomes slow after integrating GoVisual.
 
 2. **Memory Issues**
    - Adjust TTL to clean up older entries faster
-   - Example: `govisual.WithRedisStorage("redis://localhost:6379/0", 3600) // 1 hour TTL`
+   - Example: `redis.New("redis://localhost:6379/0", 500, 3600) // 1 hour TTL`
 
 ## OpenTelemetry Integration Issues
 

@@ -4,27 +4,24 @@ This guide covers installing GoVisual for your Go web applications.
 
 ## Requirements
 
-- Go 1.19 or higher
-- (Optional) PostgreSQL for persistent storage backend
-- (Optional) Redis for high-performance storage backend
-- (Optional) OpenTelemetry collector for telemetry data export
+- Go 1.24 or higher
+- (Optional) a database for persistent storage — each backend is its own module under `store/`
+- (Optional) an OpenTelemetry collector, via the `telemetry` module
 
 ## Using Go Modules (Recommended)
 
 The simplest way to install GoVisual is via Go modules:
 
 ```bash
-go get github.com/doganarif/govisual
+go get github.com/doganarif/govisual/v2
 ```
 
-## Manual Installation
-
-You can also manually clone the repository:
+The core module has no database drivers or gRPC. Add-ons install separately, only when you use them:
 
 ```bash
-git clone https://github.com/doganarif/govisual.git
-cd govisual
-go install
+go get github.com/doganarif/govisual/store/postgres   # or redis, sqlite, mongodb
+go get github.com/doganarif/govisual/telemetry        # OpenTelemetry export
+go get github.com/doganarif/govisual/mcp              # MCP server for coding agents
 ```
 
 ## Verifying Installation
@@ -37,7 +34,7 @@ package main
 import (
     "fmt"
     "net/http"
-    "github.com/doganarif/govisual"
+    "github.com/doganarif/govisual/v2"
 )
 
 func main() {
