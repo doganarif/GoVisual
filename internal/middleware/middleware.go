@@ -163,6 +163,10 @@ func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logRes
 		// Create a new request log
 		reqLog := store.NewRequestLog(r)
 
+		// Collect slog output emitted with this request's context.
+		ctx, collector := WithLogCollector(r.Context())
+		r = r.WithContext(ctx)
+
 		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {
 			bodyBytes, _, err := readBodyCapped(r.Body, maxBody)
@@ -211,6 +215,8 @@ func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logRes
 		if logResponseBody {
 			reqLog.ResponseBody = resWriter.body()
 		}
+
+		reqLog.Logs = collector.Snapshot()
 
 		if err := st.Add(reqLog); err != nil {
 			// Storage errors are surfaced on the log entry's Error field so they

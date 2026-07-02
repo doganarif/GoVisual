@@ -23,6 +23,16 @@ type RequestLog struct {
 	MiddlewareTrace    []map[string]interface{} `json:"MiddlewareTrace,omitempty" bson:"middleware_trace,omitempty"`
 	RouteTrace         map[string]interface{}   `json:"RouteTrace,omitempty" bson:"route_trace,omitempty"`
 	PerformanceMetrics *PerformanceMetrics      `json:"PerformanceMetrics,omitempty" bson:"performance_metrics,omitempty"`
+	Logs               []LogEntry               `json:"Logs,omitempty" bson:"logs,omitempty"`
+}
+
+// LogEntry is a single application log line emitted while the request was
+// being handled, captured via govisual.SlogHandler.
+type LogEntry struct {
+	Time    time.Time      `json:"time"`
+	Level   string         `json:"level"`
+	Message string         `json:"message"`
+	Attrs   map[string]any `json:"attrs,omitempty"`
 }
 
 // PerformanceMetrics is the per-request profiling data attached to a
