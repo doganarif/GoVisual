@@ -198,7 +198,20 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticker := time.NewTicker(2 * time.Second)
+	// When the store is notifying (the default via Wrap), new entries are
+	// pushed as they arrive; the ticker degrades to a heartbeat and a
+	// safety-net resync.
+	var notify <-chan struct{}
+	if ns, ok := h.store.(*store.NotifyingStore); ok {
+		ch, cancel := ns.Subscribe()
+		defer cancel()
+		notify = ch
+	}
+	tick := 15 * time.Second
+	if notify == nil {
+		tick = 2 * time.Second
+	}
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
 	// Seed lastSeen from the snapshot we just sent. Without this, the first
@@ -208,48 +221,65 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if len(initial) > 0 {
 		lastSeen = initial[0].ID
 	}
+
+	// flushNew announces entries added since lastSeen. heartbeat controls
+	// whether an idle pass emits a keep-alive comment.
+	flushNew := func(heartbeat bool) bool {
+		latest := h.store.GetLatest(50)
+		// Find any entries newer than what we last announced. The store
+		// returns newest-first, so we slice everything before lastSeen.
+		found := lastSeen == ""
+		cutoff := len(latest)
+		for i, l := range latest {
+			if l.ID == lastSeen {
+				cutoff = i
+				found = true
+				break
+			}
+		}
+		if lastSeen != "" && !found {
+			// lastSeen is no longer in the store — the user cleared the
+			// log (or it rolled out of the cap). Resync the client with a
+			// fresh snapshot so it discards the stale entries.
+			if !writeEvent("snapshot", latest) {
+				return false
+			}
+			if len(latest) > 0 {
+				lastSeen = latest[0].ID
+			} else {
+				lastSeen = ""
+			}
+			return true
+		}
+		if cutoff == 0 {
+			if !heartbeat {
+				return true
+			}
+			// Heartbeat keeps proxies from closing idle connections.
+			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+				return false
+			}
+			flusher.Flush()
+			return true
+		}
+		fresh := latest[:cutoff]
+		if !writeEvent("append", fresh) {
+			return false
+		}
+		lastSeen = fresh[0].ID
+		return true
+	}
+
 	for {
 		select {
-		case <-ticker.C:
-			latest := h.store.GetLatest(50)
-			// Find any entries newer than what we last announced. The store
-			// returns newest-first, so we slice everything before lastSeen.
-			found := lastSeen == ""
-			cutoff := len(latest)
-			for i, l := range latest {
-				if l.ID == lastSeen {
-					cutoff = i
-					found = true
-					break
-				}
-			}
-			if lastSeen != "" && !found {
-				// lastSeen is no longer in the store — the user cleared the
-				// log (or it rolled out of the cap). Resync the client with a
-				// fresh snapshot so it discards the stale entries.
-				if !writeEvent("snapshot", latest) {
-					return
-				}
-				if len(latest) > 0 {
-					lastSeen = latest[0].ID
-				} else {
-					lastSeen = ""
-				}
-				continue
-			}
-			if cutoff == 0 {
-				// Heartbeat keeps proxies from closing idle connections.
-				if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
-					return
-				}
-				flusher.Flush()
-				continue
-			}
-			fresh := latest[:cutoff]
-			if !writeEvent("append", fresh) {
+		case <-notify:
+			if !flushNew(false) {
 				return
 			}
-			lastSeen = fresh[0].ID
+		case <-ticker.C:
+			if !flushNew(true) {
+				return
+			}
 		case <-r.Context().Done():
 			return
 		}
