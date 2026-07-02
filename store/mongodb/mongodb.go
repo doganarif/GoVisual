@@ -1,4 +1,4 @@
-package store
+package mongodb
 
 import (
 	"context"
@@ -7,23 +7,27 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
-// MongoDBStore implements the Store interface with MongoDB as backend
-type MongoDBStore struct {
+// cleanupEveryN runs the capacity trim once every N successful inserts,
+// amortizing its cost instead of paying it on every request.
+const cleanupEveryN = 32
+
+// Store implements the Store interface with MongoDB as backend
+type Store struct {
 	database    *mongo.Database
 	collection  *mongo.Collection
 	capacity    int
 	insertCount atomic.Uint64
 }
 
-// NewMongoDBStore creates a new MongoDB-backend store
-func NewMongoDBStore(uri, databaseName, collectionName string, capacity int) (*MongoDBStore, error) {
+// NewStore creates a new MongoDB-backend store
+func New(uri, databaseName, collectionName string, capacity int) (*Store, error) {
 	if capacity <= 0 {
 		capacity = 100
 	}
@@ -54,18 +58,18 @@ func NewMongoDBStore(uri, databaseName, collectionName string, capacity int) (*M
 		return nil, fmt.Errorf("failed to create index in MongoDB: %w", err)
 	}
 
-	return &MongoDBStore{
+	return &Store{
 		database:   database,
 		collection: collection,
 		capacity:   capacity,
 	}, nil
 }
 
-func (m *MongoDBStore) opCtx() (context.Context, context.CancelFunc) {
+func (m *Store) opCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
-func (m *MongoDBStore) Add(reqLog *model.RequestLog) error {
+func (m *Store) Add(reqLog *store.RequestLog) error {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
@@ -78,7 +82,7 @@ func (m *MongoDBStore) Add(reqLog *model.RequestLog) error {
 	return nil
 }
 
-func (m *MongoDBStore) cleanup() {
+func (m *Store) cleanup() {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
@@ -116,11 +120,11 @@ func (m *MongoDBStore) cleanup() {
 	}
 }
 
-func (m *MongoDBStore) Get(id string) (*model.RequestLog, bool) {
+func (m *Store) Get(id string) (*store.RequestLog, bool) {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
-	var reqLog model.RequestLog
+	var reqLog store.RequestLog
 	if err := m.collection.FindOne(ctx, bson.M{"_id": id}).Decode(&reqLog); err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, false
@@ -131,7 +135,7 @@ func (m *MongoDBStore) Get(id string) (*model.RequestLog, bool) {
 	return &reqLog, true
 }
 
-func (m *MongoDBStore) GetAll() []*model.RequestLog {
+func (m *Store) GetAll() []*store.RequestLog {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
@@ -143,9 +147,9 @@ func (m *MongoDBStore) GetAll() []*model.RequestLog {
 	}
 	defer cursor.Close(ctx)
 
-	out := make([]*model.RequestLog, 0)
+	out := make([]*store.RequestLog, 0)
 	for cursor.Next(ctx) {
-		var reqLog model.RequestLog
+		var reqLog store.RequestLog
 		if err := cursor.Decode(&reqLog); err != nil {
 			log.Printf("govisual: failed to decode MongoDB log: %v", err)
 			continue
@@ -155,7 +159,7 @@ func (m *MongoDBStore) GetAll() []*model.RequestLog {
 	return out
 }
 
-func (m *MongoDBStore) GetLatest(n int) []*model.RequestLog {
+func (m *Store) GetLatest(n int) []*store.RequestLog {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
@@ -167,9 +171,9 @@ func (m *MongoDBStore) GetLatest(n int) []*model.RequestLog {
 	}
 	defer cursor.Close(ctx)
 
-	out := make([]*model.RequestLog, 0)
+	out := make([]*store.RequestLog, 0)
 	for cursor.Next(ctx) {
-		var reqLog model.RequestLog
+		var reqLog store.RequestLog
 		if err := cursor.Decode(&reqLog); err != nil {
 			log.Printf("govisual: failed to decode MongoDB log: %v", err)
 			continue
@@ -179,7 +183,7 @@ func (m *MongoDBStore) GetLatest(n int) []*model.RequestLog {
 	return out
 }
 
-func (m *MongoDBStore) Clear() error {
+func (m *Store) Clear() error {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
@@ -189,7 +193,7 @@ func (m *MongoDBStore) Clear() error {
 	return nil
 }
 
-func (m *MongoDBStore) Close() error {
+func (m *Store) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return m.database.Client().Disconnect(ctx)

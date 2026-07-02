@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doganarif/govisual/internal/dashboard"
-	"github.com/doganarif/govisual/internal/middleware"
-	"github.com/doganarif/govisual/internal/profiling"
-	"github.com/doganarif/govisual/internal/store"
-	"github.com/doganarif/govisual/internal/telemetry"
+	"github.com/doganarif/govisual/v2/internal/dashboard"
+	"github.com/doganarif/govisual/v2/internal/middleware"
+	"github.com/doganarif/govisual/v2/internal/profiling"
+	"github.com/doganarif/govisual/v2/internal/telemetry"
+	"github.com/doganarif/govisual/v2/store"
 )
 
 // Wrap wraps an http.Handler with the govisual request visualization middleware
@@ -27,21 +27,9 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		opt(config)
 	}
 
-	var requestStore store.Store
-	storeConfig := &store.StorageConfig{
-		Type:             config.StorageType,
-		Capacity:         config.MaxRequests,
-		ConnectionString: config.ConnectionString,
-		TableName:        config.TableName,
-		TTL:              config.RedisTTL,
-		ExistingDB:       config.ExistingDB,
-	}
-	rs, err := store.NewStore(storeConfig)
-	if err != nil {
-		log.Printf("govisual: failed to create configured storage backend: %v. Falling back to in-memory storage.", err)
-		requestStore = store.NewInMemoryStore(config.MaxRequests)
-	} else {
-		requestStore = rs
+	requestStore := config.Store
+	if requestStore == nil {
+		requestStore = store.NewMemory(config.MaxRequests)
 	}
 
 	var profiler *profiling.Profiler

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/doganarif/govisual/v2/store"
 )
 
 // ProfileType represents the type of profiling to perform.
@@ -312,6 +314,44 @@ func (m *Metrics) snapshot() *Metrics {
 	c.HTTPCalls = append([]HTTPCallMetric(nil), m.HTTPCalls...)
 	c.Bottlenecks = append([]Bottleneck(nil), m.Bottlenecks...)
 	return c
+}
+
+// Model converts the metrics into the plain store.PerformanceMetrics that
+// gets attached to a RequestLog.
+func (m *Metrics) Model() *store.PerformanceMetrics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := &store.PerformanceMetrics{
+		RequestID:        m.RequestID,
+		StartTime:        m.StartTime,
+		EndTime:          m.EndTime,
+		Duration:         m.Duration,
+		CPUTime:          m.CPUTime,
+		MemoryAlloc:      m.MemoryAlloc,
+		MemoryTotalAlloc: m.MemoryTotalAlloc,
+		NumGoroutines:    m.NumGoroutines,
+		NumGC:            m.NumGC,
+		GCPauseTotal:     m.GCPauseTotal,
+		CPUProfile:       m.CPUProfile,
+		HeapProfile:      m.HeapProfile,
+	}
+	if m.FunctionTimings != nil {
+		out.FunctionTimings = make(map[string]time.Duration, len(m.FunctionTimings))
+		for k, v := range m.FunctionTimings {
+			out.FunctionTimings[k] = v
+		}
+	}
+	for _, q := range m.SQLQueries {
+		out.SQLQueries = append(out.SQLQueries, store.SQLQuery(q))
+	}
+	for _, h := range m.HTTPCalls {
+		out.HTTPCalls = append(out.HTTPCalls, store.HTTPCall(h))
+	}
+	for _, b := range m.Bottlenecks {
+		out.Bottlenecks = append(out.Bottlenecks, store.Bottleneck(b))
+	}
+	return out
 }
 
 // RecordFunction records the timing of a function

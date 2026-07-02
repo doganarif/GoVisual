@@ -20,8 +20,10 @@ A lightweight, zero-configuration HTTP request visualizer and debugger for Go we
 ## Installation
 
 ```bash
-go get github.com/doganarif/govisual
+go get github.com/doganarif/govisual/v2
 ```
+
+The core module has no database drivers, no gRPC, nothing you didn't ask for. Storage backends live in separate modules you pull in only when you use them.
 
 ## Quick Start
 
@@ -30,7 +32,7 @@ package main
 
 import (
     "net/http"
-    "github.com/doganarif/govisual"
+    "github.com/doganarif/govisual/v2"
 )
 
 func main() {
@@ -85,16 +87,8 @@ handler := govisual.Wrap(
     govisual.WithServiceVersion("1.0.0"),       // Service version
     govisual.WithOTelEndpoint("localhost:4317"), // OTLP endpoint
 
-    // Storage options (choose one)
-    govisual.WithMemoryStorage(),                // In-memory storage (default)
-    govisual.WithPostgresStorage(               // PostgreSQL storage
-        "postgres://user:password@localhost:5432/database?sslmode=disable",
-        "govisual_requests"                     // Table name
-    ),
-    govisual.WithRedisStorage(                  // Redis storage
-        "redis://localhost:6379/0",             // Redis connection string
-        86400                                   // TTL in seconds (24 hours)
-    ),
+    // Storage (in-memory by default; see Storage Backends below)
+    govisual.WithStore(myStore),
 )
 ```
 
@@ -109,92 +103,46 @@ The dashboard is meant for local development, so the risky endpoints are off unl
 
 ## Storage Backends
 
-GoVisual supports multiple storage backends for storing request logs:
+Request logs are kept in memory by default (bounded by `WithMaxRequests`). For persistence, each database backend is its own Go module — installing one is what pulls in its driver:
 
-### In-Memory Storage (Default)
-
-The default storage keeps all request logs in memory. This is the simplest option but logs will be lost when the application restarts.
-
-```go
-handler := govisual.Wrap(
-    mux,
-    govisual.WithMemoryStorage(), // Optional, this is the default
-)
+```bash
+go get github.com/doganarif/govisual/store/postgres   # or redis, sqlite, mongodb
 ```
 
-### PostgreSQL Storage
-
-For persistent storage, you can use PostgreSQL. This requires the `github.com/lib/pq` package.
-
-```go
-handler := govisual.Wrap(
-    mux,
-    govisual.WithPostgresStorage(
-        "postgres://user:password@localhost:5432/dbname?sslmode=disable", // Connection string
-        "govisual_requests"  // Table name (created automatically if it doesn't exist)
-    ),
-)
-```
-
-### Redis Storage
-
-For high-performance storage with automatic expiration, you can use Redis. This requires the `github.com/go-redis/redis/v8` package.
-
-```go
-handler := govisual.Wrap(
-    mux,
-    govisual.WithRedisStorage(
-        "redis://localhost:6379/0", // Redis connection string
-        86400                       // TTL in seconds (24 hours)
-    ),
-)
-```
-
-## SQLite Driver Conflict
-
-If you're already using a SQLite driver in your application (such as `github.com/mattn/go-sqlite3`), you may experience a conflict when using govisual with SQLite storage:
-
-```
-panic: sql: Register called twice for driver sqlite3
-```
-
-This occurs because both your application and govisual try to register the SQLite driver with the same name.
-
-To resolve this issue, you can pass your existing database connection to govisual:
+Construct the store and hand it to `WithStore`:
 
 ```go
 import (
-    "database/sql"
-
-    "github.com/doganarif/govisual"
-    _ "github.com/mattn/go-sqlite3" // Your preferred SQLite driver
+    "github.com/doganarif/govisual/store/postgres"
+    "github.com/doganarif/govisual/v2"
 )
 
-func main() {
-    // Create your own database connection
-    db, err := sql.Open("sqlite3", "path/to/your/database.db")
-    if err != nil {
-        // Handle error
-    }
-    defer db.Close()
-
-    // Pass the existing connection to govisual
-    app := gin.New()
-    visualHandler := govisual.Wrap(
-        app,
-        govisual.WithSQLiteStorageDB(db, "govisual_requests"),
-    )
-
-    // Use visualHandler as your main handler
-    http.ListenAndServe(":8080", visualHandler)
+st, err := postgres.New(
+    "postgres://user:password@localhost:5432/dbname?sslmode=disable",
+    "govisual_requests", // table, created automatically
+    500,                 // capacity
+)
+if err != nil {
+    log.Fatal(err)
 }
+
+handler := govisual.Wrap(mux, govisual.WithStore(st))
 ```
 
-This approach allows you to:
+The other backends follow the same shape:
 
-1. Use your preferred SQLite driver
-2. Avoid driver registration conflicts
-3. Reuse your existing connection
+```go
+redis.New("redis://localhost:6379/0", 500, 86400)          // capacity, TTL seconds
+sqlite.New("requests.db", "govisual_requests", 500)
+mongodb.New("mongodb://localhost:27017", "db", "coll", 500)
+```
+
+If your application already registers a SQLite driver, reuse your own `*sql.DB` instead of opening a second one:
+
+```go
+db, _ := sql.Open("sqlite3", "path/to/your/database.db")
+st, err := sqlite.NewWithDB(db, "govisual_requests", 500)
+```
 
 ## Examples
 

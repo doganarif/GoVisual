@@ -1,4 +1,4 @@
-package store
+package postgres
 
 import (
 	"database/sql"
@@ -7,7 +7,7 @@ import (
 	"log"
 	"sync/atomic"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
 	_ "github.com/lib/pq"
 )
 
@@ -16,21 +16,21 @@ import (
 // for far less load on the database.
 const cleanupEveryN = 32
 
-// PostgresStore implements the Store interface with PostgreSQL as backend
-type PostgresStore struct {
+// Store implements the Store interface with PostgreSQL as backend
+type Store struct {
 	db          *sql.DB
 	tableName   string
 	capacity    int
 	insertCount atomic.Uint64
 }
 
-// NewPostgresStore creates a new PostgreSQL-backed store
-func NewPostgresStore(connStr, tableName string, capacity int) (*PostgresStore, error) {
+// NewStore creates a new PostgreSQL-backed store
+func New(connStr, tableName string, capacity int) (*Store, error) {
 	if capacity <= 0 {
 		capacity = 100
 	}
 
-	if !IsValidTableName(tableName) {
+	if !store.IsValidTableName(tableName) {
 		return nil, fmt.Errorf("invalid table name %q: must match [A-Za-z_][A-Za-z0-9_]*", tableName)
 	}
 
@@ -44,7 +44,7 @@ func NewPostgresStore(connStr, tableName string, capacity int) (*PostgresStore, 
 		return nil, fmt.Errorf("failed to ping PostgreSQL: %w", err)
 	}
 
-	s := &PostgresStore{
+	s := &Store{
 		db:        db,
 		tableName: tableName,
 		capacity:  capacity,
@@ -58,7 +58,7 @@ func NewPostgresStore(connStr, tableName string, capacity int) (*PostgresStore, 
 	return s, nil
 }
 
-func (s *PostgresStore) createTable() error {
+func (s *Store) createTable() error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id TEXT PRIMARY KEY,
@@ -90,7 +90,7 @@ func (s *PostgresStore) createTable() error {
 }
 
 // Add adds a new request log to the store
-func (s *PostgresStore) Add(reqLog *model.RequestLog) error {
+func (s *Store) Add(reqLog *store.RequestLog) error {
 	reqHeaders := prepareJSON(reqLog.RequestHeaders)
 	respHeaders := prepareJSON(reqLog.ResponseHeaders)
 
@@ -157,7 +157,7 @@ func prepareJSON(v interface{}) string {
 }
 
 // cleanup removes old logs to maintain the capacity limit
-func (s *PostgresStore) cleanup() {
+func (s *Store) cleanup() {
 	// One statement that keeps the newest rows; a separate COUNT would go
 	// stale under concurrent inserts and leave the table above capacity.
 	deleteQuery := fmt.Sprintf(`
@@ -175,7 +175,7 @@ func (s *PostgresStore) cleanup() {
 }
 
 // Get retrieves a specific request log by its ID
-func (s *PostgresStore) Get(id string) (*model.RequestLog, bool) {
+func (s *Store) Get(id string) (*store.RequestLog, bool) {
 	query := fmt.Sprintf(`
 		SELECT
 			id, timestamp, method, path, query,
@@ -189,7 +189,7 @@ func (s *PostgresStore) Get(id string) (*model.RequestLog, bool) {
 	`, s.tableName)
 
 	var (
-		reqLog          model.RequestLog
+		reqLog          store.RequestLog
 		reqHeadersStr   string
 		respHeadersStr  string
 		middlewareTrace string
@@ -229,7 +229,7 @@ func (s *PostgresStore) Get(id string) (*model.RequestLog, bool) {
 }
 
 // GetAll returns all stored request logs
-func (s *PostgresStore) GetAll() []*model.RequestLog {
+func (s *Store) GetAll() []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
 			id, timestamp, method, path, query,
@@ -246,7 +246,7 @@ func (s *PostgresStore) GetAll() []*model.RequestLog {
 }
 
 // GetLatest returns the n most recent request logs
-func (s *PostgresStore) GetLatest(n int) []*model.RequestLog {
+func (s *Store) GetLatest(n int) []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
 			id, timestamp, method, path, query,
@@ -263,7 +263,7 @@ func (s *PostgresStore) GetLatest(n int) []*model.RequestLog {
 	return s.queryLogs(query, n)
 }
 
-func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.RequestLog {
+func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		log.Printf("govisual: failed to query logs from PostgreSQL: %v", err)
@@ -271,11 +271,11 @@ func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.Re
 	}
 	defer rows.Close()
 
-	var logs []*model.RequestLog
+	var logs []*store.RequestLog
 
 	for rows.Next() {
 		var (
-			reqLog          model.RequestLog
+			reqLog          store.RequestLog
 			reqHeadersStr   string
 			respHeadersStr  string
 			middlewareTrace string
@@ -318,7 +318,7 @@ func (s *PostgresStore) queryLogs(query string, args ...interface{}) []*model.Re
 }
 
 // Clear clears all stored request logs
-func (s *PostgresStore) Clear() error {
+func (s *Store) Clear() error {
 	query := fmt.Sprintf("TRUNCATE TABLE %s", s.tableName)
 	if _, err := s.db.Exec(query); err != nil {
 		return fmt.Errorf("failed to clear logs: %w", err)
@@ -327,7 +327,7 @@ func (s *PostgresStore) Clear() error {
 }
 
 // Close closes the database connection
-func (s *PostgresStore) Close() error {
+func (s *Store) Close() error {
 	return s.db.Close()
 }
 

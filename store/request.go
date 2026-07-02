@@ -1,12 +1,10 @@
-package model
+package store
 
 import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
 	"time"
-
-	"github.com/doganarif/govisual/internal/profiling"
 )
 
 type RequestLog struct {
@@ -24,7 +22,55 @@ type RequestLog struct {
 	Error              string                   `json:"Error,omitempty" bson:"error,omitempty"`
 	MiddlewareTrace    []map[string]interface{} `json:"MiddlewareTrace,omitempty" bson:"middleware_trace,omitempty"`
 	RouteTrace         map[string]interface{}   `json:"RouteTrace,omitempty" bson:"route_trace,omitempty"`
-	PerformanceMetrics *profiling.Metrics       `json:"PerformanceMetrics,omitempty" bson:"performance_metrics,omitempty"`
+	PerformanceMetrics *PerformanceMetrics      `json:"PerformanceMetrics,omitempty" bson:"performance_metrics,omitempty"`
+}
+
+// PerformanceMetrics is the per-request profiling data attached to a
+// RequestLog. It is plain data; the profiler that produces it lives in
+// internal/profiling.
+type PerformanceMetrics struct {
+	RequestID        string                   `json:"request_id"`
+	StartTime        time.Time                `json:"start_time"`
+	EndTime          time.Time                `json:"end_time"`
+	Duration         time.Duration            `json:"duration"`
+	CPUTime          time.Duration            `json:"cpu_time"`
+	MemoryAlloc      uint64                   `json:"memory_alloc"`
+	MemoryTotalAlloc uint64                   `json:"memory_total_alloc"`
+	NumGoroutines    int                      `json:"num_goroutines"`
+	NumGC            uint32                   `json:"num_gc"`
+	GCPauseTotal     time.Duration            `json:"gc_pause_total"`
+	FunctionTimings  map[string]time.Duration `json:"function_timings,omitempty"`
+	SQLQueries       []SQLQuery               `json:"sql_queries,omitempty"`
+	HTTPCalls        []HTTPCall               `json:"http_calls,omitempty"`
+	Bottlenecks      []Bottleneck             `json:"bottlenecks,omitempty"`
+	CPUProfile       []byte                   `json:"-"`
+	HeapProfile      []byte                   `json:"-"`
+}
+
+// SQLQuery is a single captured database query.
+type SQLQuery struct {
+	Query    string        `json:"query"`
+	Duration time.Duration `json:"duration"`
+	Rows     int           `json:"rows"`
+	Error    string        `json:"error,omitempty"`
+}
+
+// HTTPCall is a single captured outbound HTTP call.
+type HTTPCall struct {
+	Method   string        `json:"method"`
+	URL      string        `json:"url"`
+	Duration time.Duration `json:"duration"`
+	Status   int           `json:"status"`
+	Size     int64         `json:"size"`
+}
+
+// Bottleneck is a performance problem detected on a request.
+type Bottleneck struct {
+	Type        string        `json:"type"` // "cpu", "memory", "io", "database", "http"
+	Description string        `json:"description"`
+	Impact      float64       `json:"impact"` // 0-1 scale of impact
+	Duration    time.Duration `json:"duration"`
+	Suggestion  string        `json:"suggestion"`
 }
 
 func NewRequestLog(req *http.Request) *RequestLog {

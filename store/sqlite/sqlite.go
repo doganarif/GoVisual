@@ -1,4 +1,4 @@
-package store
+package sqlite
 
 import (
 	"database/sql"
@@ -7,17 +7,21 @@ import (
 	"log"
 	"sync/atomic"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
 )
 
-// SQLiteStore implements the Store interface with SQLite as backend.
+// cleanupEveryN runs the capacity trim once every N successful inserts,
+// amortizing its cost instead of paying it on every request.
+const cleanupEveryN = 32
+
+// Store implements the Store interface with SQLite as backend.
 //
 // SQLite driver registration is the caller's responsibility — govisual does
 // not import a driver to avoid forcing a specific implementation on users.
 // Register your preferred driver (e.g. mattn/go-sqlite3 or ncruces/go-sqlite3)
-// before calling NewSQLiteStore, or use NewSQLiteStoreWithDB with a pre-built
+// before calling NewStore, or use NewWithDB with a pre-built
 // *sql.DB.
-type SQLiteStore struct {
+type Store struct {
 	db             *sql.DB
 	tableName      string
 	capacity       int
@@ -25,15 +29,15 @@ type SQLiteStore struct {
 	insertCount    atomic.Uint64
 }
 
-// NewSQLiteStore creates a new SQLite-backed store.
+// NewStore creates a new SQLite-backed store.
 // dbPath is forwarded to sql.Open("sqlite3", dbPath); ensure a SQLite driver
 // is already registered under the name "sqlite3".
-func NewSQLiteStore(dbPath, tableName string, capacity int) (*SQLiteStore, error) {
+func New(dbPath, tableName string, capacity int) (*Store, error) {
 	if capacity <= 0 {
 		capacity = 100
 	}
 
-	if !IsValidTableName(tableName) {
+	if !store.IsValidTableName(tableName) {
 		return nil, fmt.Errorf("invalid table name %q: must match [A-Za-z_][A-Za-z0-9_]*", tableName)
 	}
 
@@ -47,7 +51,7 @@ func NewSQLiteStore(dbPath, tableName string, capacity int) (*SQLiteStore, error
 		return nil, fmt.Errorf("failed to ping SQLite DB: %w", err)
 	}
 
-	s := &SQLiteStore{
+	s := &Store{
 		db:             db,
 		tableName:      tableName,
 		capacity:       capacity,
@@ -62,15 +66,15 @@ func NewSQLiteStore(dbPath, tableName string, capacity int) (*SQLiteStore, error
 	return s, nil
 }
 
-// NewSQLiteStoreWithDB creates a new SQLite store with an existing database connection.
-func NewSQLiteStoreWithDB(db *sql.DB, tableName string, capacity int) (*SQLiteStore, error) {
+// NewWithDB creates a new SQLite store with an existing database connection.
+func NewWithDB(db *sql.DB, tableName string, capacity int) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection cannot be nil")
 	}
 	if capacity <= 0 {
 		capacity = 100
 	}
-	if !IsValidTableName(tableName) {
+	if !store.IsValidTableName(tableName) {
 		return nil, fmt.Errorf("invalid table name %q: must match [A-Za-z_][A-Za-z0-9_]*", tableName)
 	}
 
@@ -78,7 +82,7 @@ func NewSQLiteStoreWithDB(db *sql.DB, tableName string, capacity int) (*SQLiteSt
 		return nil, fmt.Errorf("failed to ping SQLite DB: %w", err)
 	}
 
-	s := &SQLiteStore{
+	s := &Store{
 		db:             db,
 		tableName:      tableName,
 		capacity:       capacity,
@@ -92,7 +96,7 @@ func NewSQLiteStoreWithDB(db *sql.DB, tableName string, capacity int) (*SQLiteSt
 	return s, nil
 }
 
-func (s *SQLiteStore) createTable() error {
+func (s *Store) createTable() error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id TEXT PRIMARY KEY,
@@ -123,7 +127,7 @@ func (s *SQLiteStore) createTable() error {
 	return err
 }
 
-func (s *SQLiteStore) Add(reqLog *model.RequestLog) error {
+func (s *Store) Add(reqLog *store.RequestLog) error {
 	reqHeaders := prepareJSON(reqLog.RequestHeaders)
 	respHeaders := prepareJSON(reqLog.ResponseHeaders)
 
@@ -176,7 +180,7 @@ func (s *SQLiteStore) Add(reqLog *model.RequestLog) error {
 	return nil
 }
 
-func (s *SQLiteStore) cleanup() {
+func (s *Store) cleanup() {
 	// One statement that keeps the newest rows; a separate COUNT would go
 	// stale under concurrent inserts and leave the table above capacity.
 	deleteQuery := fmt.Sprintf(`
@@ -193,7 +197,7 @@ func (s *SQLiteStore) cleanup() {
 	}
 }
 
-func (s *SQLiteStore) Get(id string) (*model.RequestLog, bool) {
+func (s *Store) Get(id string) (*store.RequestLog, bool) {
 	query := fmt.Sprintf(`
 		SELECT
 			id, timestamp, method, path, query,
@@ -207,7 +211,7 @@ func (s *SQLiteStore) Get(id string) (*model.RequestLog, bool) {
 	`, s.tableName)
 
 	var (
-		reqLog          model.RequestLog
+		reqLog          store.RequestLog
 		reqHeadersStr   string
 		respHeadersStr  string
 		middlewareTrace string
@@ -246,7 +250,7 @@ func (s *SQLiteStore) Get(id string) (*model.RequestLog, bool) {
 	return &reqLog, true
 }
 
-func (s *SQLiteStore) GetAll() []*model.RequestLog {
+func (s *Store) GetAll() []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
 			id, timestamp, method, path, query,
@@ -262,7 +266,7 @@ func (s *SQLiteStore) GetAll() []*model.RequestLog {
 	return s.queryLogs(query)
 }
 
-func (s *SQLiteStore) GetLatest(n int) []*model.RequestLog {
+func (s *Store) GetLatest(n int) []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
 			id, timestamp, method, path, query,
@@ -279,7 +283,7 @@ func (s *SQLiteStore) GetLatest(n int) []*model.RequestLog {
 	return s.queryLogs(query, n)
 }
 
-func (s *SQLiteStore) queryLogs(query string, args ...interface{}) []*model.RequestLog {
+func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		log.Printf("govisual: failed to query logs from SQLite: %v", err)
@@ -287,10 +291,10 @@ func (s *SQLiteStore) queryLogs(query string, args ...interface{}) []*model.Requ
 	}
 	defer rows.Close()
 
-	var logs []*model.RequestLog
+	var logs []*store.RequestLog
 	for rows.Next() {
 		var (
-			reqLog          model.RequestLog
+			reqLog          store.RequestLog
 			reqHeadersStr   string
 			respHeadersStr  string
 			middlewareTrace string
@@ -331,7 +335,7 @@ func (s *SQLiteStore) queryLogs(query string, args ...interface{}) []*model.Requ
 	return logs
 }
 
-func (s *SQLiteStore) Clear() error {
+func (s *Store) Clear() error {
 	query := fmt.Sprintf("DELETE FROM %s", s.tableName)
 	if _, err := s.db.Exec(query); err != nil {
 		return fmt.Errorf("failed to clear logs: %w", err)
@@ -339,9 +343,31 @@ func (s *SQLiteStore) Clear() error {
 	return nil
 }
 
-func (s *SQLiteStore) Close() error {
+func (s *Store) Close() error {
 	if s.ownsConnection {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// prepareJSON ensures we have a valid JSON string
+func prepareJSON(v interface{}) string {
+	if v == nil {
+		return "{}"
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		log.Printf("govisual: failed to marshal JSON: %v", err)
+		return "{}"
+	}
+	return string(data)
+}
+
+func unmarshalLogJSON(s string, v interface{}, field, logID string) {
+	if s == "" {
+		return
+	}
+	if err := json.Unmarshal([]byte(s), v); err != nil {
+		log.Printf("govisual: failed to unmarshal %s for log %s: %v", field, logID, err)
+	}
 }

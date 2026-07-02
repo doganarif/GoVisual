@@ -7,20 +7,20 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
 )
 
 // mockStore implements store.Store for testing
 type mockStore struct {
-	logs []*model.RequestLog
+	logs []*store.RequestLog
 }
 
-func (m *mockStore) Add(log *model.RequestLog) error {
+func (m *mockStore) Add(log *store.RequestLog) error {
 	m.logs = append(m.logs, log)
 	return nil
 }
 
-func (m *mockStore) Get(id string) (*model.RequestLog, bool) {
+func (m *mockStore) Get(id string) (*store.RequestLog, bool) {
 	for _, log := range m.logs {
 		if log.ID == id {
 			return log, true
@@ -29,7 +29,7 @@ func (m *mockStore) Get(id string) (*model.RequestLog, bool) {
 	return nil, false
 }
 
-func (m *mockStore) GetAll() []*model.RequestLog {
+func (m *mockStore) GetAll() []*store.RequestLog {
 	return m.logs
 }
 
@@ -38,7 +38,7 @@ func (m *mockStore) Clear() error {
 	return nil
 }
 
-func (m *mockStore) GetLatest(n int) []*model.RequestLog {
+func (m *mockStore) GetLatest(n int) []*store.RequestLog {
 	if n >= len(m.logs) {
 		return m.logs
 	}

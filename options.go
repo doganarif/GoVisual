@@ -3,15 +3,13 @@ package govisual
 import (
 	"context"
 	"crypto/subtle"
-	"database/sql"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/doganarif/govisual/internal/profiling"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/v2/internal/profiling"
+	"github.com/doganarif/govisual/v2/store"
 )
 
 // DashboardAuth authorizes a request to the dashboard. Return true to allow,
@@ -48,25 +46,15 @@ type Config struct {
 
 	OTelExporter string
 
-	// Storage configuration
-	StorageType store.StorageType
-
-	// Connection string for database stores
-	ConnectionString string
-
-	// TableName for SQL database stores
-	TableName string
-
-	// TTL for Redis store in seconds
-	RedisTTL int
-
-	// Existing database connection for SQLite
-	ExistingDB *sql.DB
+	// Store is the storage backend for captured requests. Nil means an
+	// in-memory store bounded by MaxRequests. Database-backed stores live in
+	// their own modules under store/ (postgres, redis, sqlite, mongodb).
+	Store store.Store
 
 	// Performance Profiling configuration
 	EnableProfiling bool
 
-	ProfileType profiling.ProfileType
+	ProfileType ProfileType
 
 	ProfileThreshold time.Duration
 
@@ -200,55 +188,13 @@ func WithOTelExporter(exporterType string) Option {
 	}
 }
 
-// WithMemoryStorage configures the application to use in-memory storage
-func WithMemoryStorage() Option {
+// WithStore sets the storage backend for captured requests. Construct one
+// from a storage module, e.g. postgres.New(...) from
+// github.com/doganarif/govisual/v2/store/postgres. Without this option an
+// in-memory store bounded by WithMaxRequests is used.
+func WithStore(s store.Store) Option {
 	return func(c *Config) {
-		c.StorageType = store.StorageTypeMemory
-	}
-}
-
-// WithPostgresStorage configures the application to use PostgreSQL storage
-func WithPostgresStorage(connStr string, tableName string) Option {
-	return func(c *Config) {
-		c.StorageType = store.StorageTypePostgres
-		c.ConnectionString = connStr
-		c.TableName = tableName
-	}
-}
-
-// WithSQLiteStorage configures the application to use SQLite storage
-func WithSQLiteStorage(dbPath string, tableName string) Option {
-	return func(c *Config) {
-		c.StorageType = store.StorageTypeSQLite
-		c.ConnectionString = dbPath
-		c.TableName = tableName
-	}
-}
-
-// WithSQLiteStorageDB configures the application to use SQLite storage with an existing database connection
-func WithSQLiteStorageDB(db *sql.DB, tableName string) Option {
-	return func(c *Config) {
-		c.StorageType = store.StorageTypeSQLiteWithDB
-		c.ExistingDB = db
-		c.TableName = tableName
-	}
-}
-
-// WithRedisStorage configures the application to use Redis storage
-func WithRedisStorage(connStr string, ttlSeconds int) Option {
-	return func(c *Config) {
-		c.StorageType = store.StorageTypeRedis
-		c.ConnectionString = connStr
-		c.RedisTTL = ttlSeconds
-	}
-}
-
-// WithMongoDBStorage configures the application to use MongoDB storage
-func WithMongoDBStorage(uri, databaseName, collectionName string) Option {
-	return func(c *Config) {
-		c.StorageType = store.StorageTypeMongoDB
-		c.ConnectionString = uri
-		c.TableName = fmt.Sprintf("%s.%s", databaseName, collectionName)
+		c.Store = s
 	}
 }
 
@@ -282,7 +228,7 @@ func WithProfiling(enabled bool) Option {
 }
 
 // WithProfileType sets the types of profiling to perform
-func WithProfileType(profileType profiling.ProfileType) Option {
+func WithProfileType(profileType ProfileType) Option {
 	return func(c *Config) {
 		c.ProfileType = profileType
 	}
@@ -389,9 +335,6 @@ func defaultConfig() *Config {
 		OTelEndpoint:        "localhost:4317",
 		OTelInsecure:        true,
 		OTelExporter:        "otlp",
-		StorageType:         store.StorageTypeMemory,
-		TableName:           "govisual_requests",
-		RedisTTL:            86400, // 24 hours
 		EnableProfiling:     false,
 		ProfileType:         profiling.ProfileAll,
 		ProfileThreshold:    10 * time.Millisecond,

@@ -10,8 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/doganarif/govisual"
-	"github.com/doganarif/govisual/internal/profiling"
+	"github.com/doganarif/govisual/v2"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -61,7 +60,7 @@ func main() {
 		govisual.WithRequestBodyLogging(true),
 		govisual.WithResponseBodyLogging(true),
 		govisual.WithProfiling(true),                      // Enable profiling
-		govisual.WithProfileType(profiling.ProfileAll),    // Profile everything
+		govisual.WithProfileType(govisual.ProfileAll),    // Profile everything
 		govisual.WithProfileThreshold(5*time.Millisecond), // Profile requests > 5ms
 		govisual.WithMaxProfileMetrics(500),               // Store up to 500 metrics
 	)

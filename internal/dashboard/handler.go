@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/doganarif/govisual/internal/profiling"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/v2/internal/profiling"
+	"github.com/doganarif/govisual/v2/store"
 )
 
 //go:embed static/*
@@ -495,20 +495,22 @@ func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metrics, found := h.profiler.GetMetrics(requestID)
-	if !found {
+	var payload *store.PerformanceMetrics
+	if m, found := h.profiler.GetMetrics(requestID); found {
+		payload = m.Model()
+	} else {
 		reqLog, found := h.store.Get(requestID)
 		if !found || reqLog.PerformanceMetrics == nil {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":"Metrics not found"}`))
 			return
 		}
-		metrics = reqLog.PerformanceMetrics
+		payload = reqLog.PerformanceMetrics
 	}
 
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
-	encoder.Encode(metrics)
+	encoder.Encode(payload)
 }
 
 func (h *Handler) handleFlameGraph(w http.ResponseWriter, r *http.Request) {
@@ -521,31 +523,32 @@ func (h *Handler) handleFlameGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var metrics *profiling.Metrics
+	var cpuProfile []byte
+	found := false
 	if h.profiler != nil {
-		m, found := h.profiler.GetMetrics(requestID)
-		if found {
-			metrics = m
+		if m, ok := h.profiler.GetMetrics(requestID); ok {
+			cpuProfile = m.CPUProfile
+			found = true
 		}
 	}
 
-	if metrics == nil {
-		reqLog, found := h.store.Get(requestID)
-		if !found || reqLog.PerformanceMetrics == nil {
+	if !found {
+		reqLog, ok := h.store.Get(requestID)
+		if !ok || reqLog.PerformanceMetrics == nil {
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error":"Metrics not found for this request"}`))
 			return
 		}
-		metrics = reqLog.PerformanceMetrics
+		cpuProfile = reqLog.PerformanceMetrics.CPUProfile
 	}
 
-	if len(metrics.CPUProfile) == 0 {
+	if len(cpuProfile) == 0 {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte(`{"error":"No CPU profile data available"}`))
 		return
 	}
 
-	flameGraph, err := profiling.GenerateFlameGraph(metrics.CPUProfile)
+	flameGraph, err := profiling.GenerateFlameGraph(cpuProfile)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(fmt.Sprintf(`{"error":"Failed to generate flame graph: %v"}`, err)))
@@ -571,11 +574,11 @@ func (h *Handler) handleBottlenecks(w http.ResponseWriter, r *http.Request) {
 	allRequests := h.store.GetLatest(maxBottleneckScan)
 
 	type BottleneckSummary struct {
-		RequestID   string                 `json:"request_id"`
-		Path        string                 `json:"path"`
-		Method      string                 `json:"method"`
-		Duration    int64                  `json:"duration"`
-		Bottlenecks []profiling.Bottleneck `json:"bottlenecks"`
+		RequestID   string             `json:"request_id"`
+		Path        string             `json:"path"`
+		Method      string             `json:"method"`
+		Duration    int64              `json:"duration"`
+		Bottlenecks []store.Bottleneck `json:"bottlenecks"`
 	}
 
 	var summaries []BottleneckSummary

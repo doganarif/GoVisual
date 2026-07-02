@@ -54,14 +54,24 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.22
+          go-version: '1.24'
 
       - name: Install SQLite driver (CGO)
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
-      - name: Run tests
+      - name: Test core module
+        run: go test -v ./...
+
+      - name: Test storage modules
         env:
           PG_CONN: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
           REDIS_CONN: redis://localhost:6379/0
           MONGO_URI: mongodb://root:root@localhost:27017
-        run: go test -v ./...
+        run: |
+          for m in store/postgres store/redis store/mongodb store/sqlite; do
+            echo "== $m"
+            (cd "$m" && go test -v ./...)
+          done
+
+      - name: Build examples
+        run: cd cmd/examples && go build ./...
