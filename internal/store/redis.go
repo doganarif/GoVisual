@@ -90,16 +90,9 @@ func (s *RedisStore) cleanup() {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
-	count, err := s.client.ZCard(ctx, s.keyPrefix+"logs").Result()
-	if err != nil {
-		log.Printf("govisual: failed to count Redis logs: %v", err)
-		return
-	}
-	if count <= int64(s.capacity) {
-		return
-	}
-
-	oldestIDs, err := s.client.ZRange(ctx, s.keyPrefix+"logs", 0, count-int64(s.capacity)-1).Result()
+	// Everything except the newest s.capacity members, by rank; a separate
+	// ZCARD would go stale under concurrent inserts.
+	oldestIDs, err := s.client.ZRange(ctx, s.keyPrefix+"logs", 0, int64(-(s.capacity + 1))).Result()
 	if err != nil {
 		log.Printf("govisual: failed to get oldest Redis log IDs: %v", err)
 		return
