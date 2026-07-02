@@ -9,6 +9,7 @@ export type View =
   | "errors"
   | "slow"
   | "analytics"
+  | "agents"
   | "environment";
 
 interface RailNavProps {
@@ -63,6 +64,17 @@ const items: Item[] = [
         <line x1="18" y1="20" x2="18" y2="10" />
         <line x1="12" y1="20" x2="12" y2="4" />
         <line x1="6" y1="20" x2="6" y2="14" />
+      </svg>
+    ),
+  },
+  {
+    id: "agents",
+    label: "Agents",
+    icon: (
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 8V4H8" />
+        <rect x="4" y="8" width="16" height="12" rx="2" />
+        <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
       </svg>
     ),
   },

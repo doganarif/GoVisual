@@ -72,6 +72,15 @@ export interface FlameGraphNode {
   children?: FlameGraphNode[];
 }
 
+export interface AgentActivity {
+  time: string;
+  tool: string;
+  args?: Record<string, string>;
+  duration: number;
+  error?: string;
+  mutating?: boolean;
+}
+
 export interface SystemInfo {
   goVersion: string;
   goos: string;
@@ -198,6 +207,10 @@ class API {
 
   getSystemInfo(signal?: AbortSignal): Promise<SystemInfo> {
     return request<SystemInfo>(`${this.baseURL}/system-info`, { signal });
+  }
+
+  getAgentActivity(signal?: AbortSignal): Promise<AgentActivity[]> {
+    return request<AgentActivity[]>(`${this.baseURL}/agent-activity`, { signal });
   }
 
   // subscribeToEvents wires both named SSE events the server emits:

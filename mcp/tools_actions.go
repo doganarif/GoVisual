@@ -30,13 +30,13 @@ type clearResult struct {
 	Cleared bool `json:"cleared"`
 }
 
-func registerActionTools(srv *sdk.Server, st store.Store) {
+func registerActionTools(srv *sdk.Server, st store.Store, cfg *config) {
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "await_request",
 		Description: "Block until a request matching the filters (method, path_contains, status_min) is " +
 			"captured, then return it in full. Trigger the traffic yourself (curl, a test, a browser tool) " +
 			"and use this to catch exactly what happened. timeout_seconds defaults to 30, max 120.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args awaitArgs) (*sdk.CallToolResult, requestDetail, error) {
+	}, recorded(cfg, "await_request", false, func(ctx context.Context, req *sdk.CallToolRequest, args awaitArgs) (*sdk.CallToolResult, requestDetail, error) {
 		timeout := time.Duration(args.TimeoutSeconds) * time.Second
 		if timeout <= 0 {
 			timeout = 30 * time.Second
@@ -90,24 +90,24 @@ func registerActionTools(srv *sdk.Server, st store.Store) {
 				return nil, detail(l, defaultBodyBytes), nil
 			}
 		}
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "copy_as_curl",
 		Description: "Render a captured request as a curl command you can run or share.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, curlResult, error) {
+	}, recorded(cfg, "copy_as_curl", false, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, curlResult, error) {
 		l, ok := st.Get(args.ID)
 		if !ok {
 			return nil, curlResult{}, fmt.Errorf("no request with id %q", args.ID)
 		}
 		return nil, curlResult{Command: asCurl(l)}, nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "save_as_test",
 		Description: "Generate a Go httptest regression test from a captured request, asserting the " +
 			"captured status code. Paste it into a _test.go file and point it at your handler.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, testResult, error) {
+	}, recorded(cfg, "save_as_test", false, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, testResult, error) {
 		l, ok := st.Get(args.ID)
 		if !ok {
 			return nil, testResult{}, fmt.Errorf("no request with id %q", args.ID)
@@ -116,17 +116,17 @@ func registerActionTools(srv *sdk.Server, st store.Store) {
 			Code: asTest(l),
 			Note: "replace `handler` with your application's http.Handler (usually the mux)",
 		}, nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name:        "clear_requests",
 		Description: "Delete all captured requests. Useful before reproducing an issue for a clean capture.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args emptyArgs) (*sdk.CallToolResult, clearResult, error) {
+	}, recorded(cfg, "clear_requests", true, func(ctx context.Context, req *sdk.CallToolRequest, args emptyArgs) (*sdk.CallToolResult, clearResult, error) {
 		if err := st.Clear(); err != nil {
 			return nil, clearResult{}, fmt.Errorf("clearing store: %w", err)
 		}
 		return nil, clearResult{Cleared: true}, nil
-	})
+	}))
 }
 
 func asCurl(l *store.RequestLog) string {

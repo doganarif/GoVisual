@@ -42,6 +42,11 @@ type Config struct {
 	// their own modules under store/ (postgres, redis, sqlite, mongodb).
 	Store store.Store
 
+	// ActivityLog, if set, is displayed on the dashboard's Agents tab. Share
+	// the same instance with the mcp module (mcp.WithActivityLog) so agent
+	// tool calls appear here.
+	ActivityLog *store.ActivityLog
+
 	// Performance Profiling configuration
 	EnableProfiling bool
 
@@ -157,6 +162,15 @@ func WithIgnorePaths(patterns ...string) Option {
 func WithStore(s store.Store) Option {
 	return func(c *Config) {
 		c.Store = s
+	}
+}
+
+// WithActivityLog attaches an activity log the dashboard can surface. Pass
+// the same *store.ActivityLog to the mcp module so coding-agent tool calls
+// show up on the dashboard's Agents tab.
+func WithActivityLog(a *store.ActivityLog) Option {
+	return func(c *Config) {
+		c.ActivityLog = a
 	}
 }
 

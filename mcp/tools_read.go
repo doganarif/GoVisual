@@ -146,25 +146,25 @@ type routeStats struct {
 	LastSeenAt string `json:"last_seen"`
 }
 
-func registerReadTools(srv *sdk.Server, st store.Store) {
+func registerReadTools(srv *sdk.Server, st store.Store, cfg *config) {
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "get_last_error",
 		Description: "Return the most recent failed request (status >= 400 or a recorded error/panic) " +
 			"with headers, body excerpts, logs, SQL queries and panic stack. Start here when debugging.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args emptyArgs) (*sdk.CallToolResult, requestDetail, error) {
+	}, recorded(cfg, "get_last_error", false, func(ctx context.Context, req *sdk.CallToolRequest, args emptyArgs) (*sdk.CallToolResult, requestDetail, error) {
 		for _, l := range st.GetLatest(200) {
 			if isFailure(l) {
 				return nil, detail(l, defaultBodyBytes), nil
 			}
 		}
 		return nil, requestDetail{}, fmt.Errorf("no failed requests captured; %d requests in store", len(st.GetAll()))
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "list_requests",
 		Description: "List captured requests, newest first. Filters: method, path_contains, status_min/status_max, " +
 			"errors_only. limit defaults to 20. Returns compact summaries; use get_request for detail.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args listArgs) (*sdk.CallToolResult, listResult, error) {
+	}, recorded(cfg, "list_requests", false, func(ctx context.Context, req *sdk.CallToolRequest, args listArgs) (*sdk.CallToolResult, listResult, error) {
 		limit := args.Limit
 		if limit <= 0 {
 			limit = defaultListLimit
@@ -197,25 +197,25 @@ func registerReadTools(srv *sdk.Server, st store.Store) {
 			res.Note = "more matches may exist; refine filters or raise limit"
 		}
 		return nil, res, nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "get_request",
 		Description: "Full detail for one captured request by id: headers, body excerpts (capped by " +
 			"max_body_bytes, default 2048), logs, SQL queries, outbound HTTP calls, bottlenecks, panic stack.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, requestDetail, error) {
+	}, recorded(cfg, "get_request", false, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, requestDetail, error) {
 		l, ok := st.Get(args.ID)
 		if !ok {
 			return nil, requestDetail{}, fmt.Errorf("no request with id %q; it may have rolled out of the store", args.ID)
 		}
 		return nil, detail(l, args.MaxBodyBytes), nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "search_requests",
 		Description: "Substring search across path, query string, request/response bodies, and errors. " +
 			"Returns compact summaries, newest first.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args searchArgs) (*sdk.CallToolResult, listResult, error) {
+	}, recorded(cfg, "search_requests", false, func(ctx context.Context, req *sdk.CallToolRequest, args searchArgs) (*sdk.CallToolResult, listResult, error) {
 		if args.Query == "" {
 			return nil, listResult{}, fmt.Errorf("query is required")
 		}
@@ -235,13 +235,13 @@ func registerReadTools(srv *sdk.Server, st store.Store) {
 			}
 		}
 		return nil, listResult{Requests: out, Total: len(all)}, nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "get_stats",
 		Description: "Aggregate view of captured traffic: per-route request count, error count, p50/p95 " +
 			"latency. Use this to find slow or failing routes before drilling in.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args emptyArgs) (*sdk.CallToolResult, statsResult, error) {
+	}, recorded(cfg, "get_stats", false, func(ctx context.Context, req *sdk.CallToolRequest, args emptyArgs) (*sdk.CallToolResult, statsResult, error) {
 		byRoute := map[string][]*store.RequestLog{}
 		for _, l := range st.GetAll() {
 			key := l.Method + " " + l.Path
@@ -273,20 +273,20 @@ func registerReadTools(srv *sdk.Server, st store.Store) {
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
 		return nil, statsResult{Routes: out}, nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "get_debug_context",
 		Description: "Everything known about one request as a single readable report: request line, status, " +
 			"timing, headers, body excerpts, application logs, SQL queries, outbound calls, and panic stack. " +
 			"The one-call version of get_request for when you want the whole crime scene.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, reportResult, error) {
+	}, recorded(cfg, "get_debug_context", false, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, reportResult, error) {
 		l, ok := st.Get(args.ID)
 		if !ok {
 			return nil, reportResult{}, fmt.Errorf("no request with id %q", args.ID)
 		}
 		return nil, reportResult{Report: debugReport(l, args.MaxBodyBytes)}, nil
-	})
+	}))
 }
 
 func matches(l *store.RequestLog, q string) bool {

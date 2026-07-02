@@ -78,6 +78,7 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		EnableReplay:     config.EnableReplay,
 		ExposeSystemInfo: config.ExposeSystemInfo,
 		ExposeEnvVars:    config.ExposeEnvVars,
+		ActivityLog:      config.ActivityLog,
 	})
 
 	guardedDash := guardDashboard(dashHandler, config)

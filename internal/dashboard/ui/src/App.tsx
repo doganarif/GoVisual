@@ -4,6 +4,7 @@ import { api, RequestLog } from "./lib/api";
 import { RailNav, View } from "./components/RailNav";
 import { RequestList } from "./components/RequestList";
 import { DetailPane } from "./components/DetailPane";
+import { AgentActivity } from "./components/AgentActivity";
 import { EnvironmentInfo } from "./components/EnvironmentInfo";
 import { RequestComparison } from "./components/RequestComparison";
 import { RequestReplay } from "./components/RequestReplay";
@@ -176,6 +177,8 @@ export function App() {
           onClearAll={handleClearAll}
           onImport={handleImport}
         />
+      ) : view === "agents" ? (
+        <AgentActivity />
       ) : (
         <EnvironmentView />
       )}
@@ -247,6 +250,8 @@ function titleFor(v: View): string {
       return "Slow";
     case "analytics":
       return "Analytics";
+    case "agents":
+      return "Agents";
     case "environment":
       return "Environment";
   }
