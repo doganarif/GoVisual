@@ -67,3 +67,24 @@ func TestWrapDriverNoProfileIsNoOp(t *testing.T) {
 		t.Fatalf("exec: %v", err)
 	}
 }
+
+func TestRecordHTTPAttachesToProfile(t *testing.T) {
+	profiler := NewProfiler(10)
+	profiler.SetProfileType(ProfileMemory)
+	profiler.SetThreshold(0)
+	ctx := profiler.StartProfiling(context.Background(), "req-http")
+
+	RecordHTTP(ctx, "GET", "https://api.example.com/users", 42*time.Millisecond, 200, 512)
+
+	metrics := profiler.EndProfiling(ctx)
+	if metrics == nil {
+		t.Fatal("expected metrics")
+	}
+	if len(metrics.HTTPCalls) != 1 {
+		t.Fatalf("expected 1 recorded call, got %d", len(metrics.HTTPCalls))
+	}
+	c := metrics.HTTPCalls[0]
+	if c.URL != "https://api.example.com/users" || c.Status != 200 || c.Size != 512 {
+		t.Fatalf("recorded call = %+v", c)
+	}
+}
