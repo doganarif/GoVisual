@@ -11,6 +11,7 @@ type RequestLog struct {
 	ID                 string                   `json:"ID" bson:"_id"`
 	Timestamp          time.Time                `json:"Timestamp" bson:"timestamp"`
 	Method             string                   `json:"Method" bson:"method"`
+	Host               string                   `json:"Host,omitempty" bson:"host,omitempty"`
 	Path               string                   `json:"Path" bson:"path"`
 	Query              string                   `json:"Query" bson:"query"`
 	RequestHeaders     http.Header              `json:"RequestHeaders" bson:"request_headers"`
@@ -89,6 +90,7 @@ func NewRequestLog(req *http.Request) *RequestLog {
 		ID:             generateID(),
 		Timestamp:      time.Now(),
 		Method:         req.Method,
+		Host:           req.Host,
 		Path:           req.URL.Path,
 		Query:          req.URL.RawQuery,
 		RequestHeaders: scrubHeaders(req.Header),
