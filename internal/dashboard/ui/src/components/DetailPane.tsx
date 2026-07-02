@@ -2,6 +2,7 @@ import { h, Fragment } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import {
   RequestLog,
+  LogEntry,
   api,
   ApiError,
   PerformanceMetrics,
@@ -10,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { FlameGraph } from "./FlameGraph";
 
-type Tab = "overview" | "headers" | "body" | "trace" | "performance";
+type Tab = "overview" | "headers" | "body" | "trace" | "logs" | "performance";
 
 interface DetailPaneProps {
   request: RequestLog | null;
@@ -107,6 +108,7 @@ export function DetailPane({
 
   const hasMetrics = !!metrics || !!request.PerformanceMetrics;
   const activeMetrics = metrics || request.PerformanceMetrics || null;
+  const hasLogs = !!request.Logs && request.Logs.length > 0;
 
   return (
     <main class="flex-1 flex flex-col bg-white overflow-hidden">
@@ -181,6 +183,19 @@ export function DetailPane({
               {labelFor(t)}
             </button>
           ))}
+          {hasLogs && (
+            <button
+              onClick={() => setTab("logs")}
+              class={cn(
+                "px-3 py-2.5 text-sm border-b-2",
+                tab === "logs"
+                  ? "border-zinc-900 text-zinc-900 font-medium"
+                  : "border-transparent text-zinc-500 hover:text-zinc-900"
+              )}
+            >
+              Logs · {request.Logs!.length}
+            </button>
+          )}
           {hasMetrics && (
             <button
               onClick={() => setTab("performance")}
@@ -202,6 +217,7 @@ export function DetailPane({
         {tab === "headers" && <Headers request={request} />}
         {tab === "body" && <Body request={request} />}
         {tab === "trace" && <Trace request={request} metrics={activeMetrics} />}
+        {tab === "logs" && <Logs request={request} />}
         {tab === "performance" && (
           <Performance
             metrics={activeMetrics}
@@ -224,6 +240,8 @@ function labelFor(t: Tab): string {
       return "Body";
     case "trace":
       return "Trace";
+    case "logs":
+      return "Logs";
     case "performance":
       return "Performance";
   }
@@ -326,10 +344,99 @@ function Overview({ request }: { request: RequestLog }) {
           <pre class="text-xs font-mono text-red-700 whitespace-pre-wrap">
             {request.Error}
           </pre>
+          {request.PanicStack && (
+            <pre class="text-[11px] font-mono text-red-600/80 whitespace-pre-wrap break-all mt-3 pt-3 border-t border-red-200 max-h-64 overflow-auto">
+              {request.PanicStack}
+            </pre>
+          )}
         </section>
       )}
     </Fragment>
   );
+}
+
+function Logs({ request }: { request: RequestLog }) {
+  const logs = request.Logs || [];
+  if (logs.length === 0) {
+    return (
+      <div class="text-xs text-zinc-500 text-center py-8">
+        No log lines captured. Wrap your slog handler with{" "}
+        <code class="font-mono bg-zinc-100 px-1 rounded">
+          govisual.SlogHandler(...)
+        </code>{" "}
+        and log with the request context to capture per-request lines here.
+      </div>
+    );
+  }
+  return (
+    <section class="border border-zinc-200 rounded-lg">
+      <header class="px-4 py-2.5 border-b border-zinc-200 flex items-center justify-between">
+        <h3 class="text-sm font-medium">Application logs</h3>
+        <span class="text-[11px] text-zinc-500">{logs.length} lines</span>
+      </header>
+      <div class="divide-y divide-zinc-100">
+        {logs.map((entry, i) => (
+          <LogRow key={i} entry={entry} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LogRow({ entry }: { entry: LogEntry }) {
+  const attrs = entry.attrs ? Object.entries(entry.attrs) : [];
+  const t = new Date(entry.time);
+  const tStr = isNaN(t.getTime())
+    ? ""
+    : t.toLocaleTimeString("en-US", { hour12: false }) +
+      "." +
+      String(t.getMilliseconds()).padStart(3, "0");
+  return (
+    <div class="px-4 py-2 text-xs">
+      <div class="flex items-baseline gap-2 font-mono">
+        {tStr && <span class="text-zinc-400 shrink-0">{tStr}</span>}
+        <span class={cn("shrink-0 font-semibold", logLevelColor(entry.level))}>
+          {entry.level}
+        </span>
+        <span class="text-zinc-900 break-all">{entry.message}</span>
+      </div>
+      {attrs.length > 0 && (
+        <div class="mt-1 pl-4 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-mono text-zinc-500">
+          {attrs.map(([k, v]) => (
+            <span key={k}>
+              <span class="text-zinc-400">{k}=</span>
+              <span class="text-zinc-700">{formatAttr(v)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatAttr(v: unknown): string {
+  if (typeof v === "string") return v;
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function logLevelColor(level: string): string {
+  switch (level.toUpperCase()) {
+    case "ERROR":
+      return "text-red-600";
+    case "WARN":
+    case "WARNING":
+      return "text-amber-600";
+    case "EVENT":
+      return "text-blue-600";
+    case "DEBUG":
+      return "text-zinc-500";
+    default:
+      return "text-emerald-700";
+  }
 }
 
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
