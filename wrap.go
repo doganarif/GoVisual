@@ -120,7 +120,13 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	guardedDash := guardDashboard(dashHandler, config)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, config.DashboardPath) {
+		if r.URL.Path == config.DashboardPath {
+			// The dashboard uses relative URLs, which only resolve under
+			// the trailing-slash form of the mount path.
+			http.Redirect(w, r, config.DashboardPath+"/", http.StatusMovedPermanently)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, config.DashboardPath+"/") {
 			http.StripPrefix(config.DashboardPath, guardedDash).ServeHTTP(w, r)
 			return
 		}
