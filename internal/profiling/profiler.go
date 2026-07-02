@@ -384,7 +384,13 @@ func (p *Profiler) RecordSQLQuery(ctx context.Context, query string, duration ti
 	if !p.enabled.Load() {
 		return
 	}
+	RecordSQL(ctx, query, duration, rows, err)
+}
 
+// RecordSQL attaches a query to the request profile carried by ctx. Without
+// an active profile it is a no-op, so it is safe to call unconditionally —
+// this is what the WrapDriver instrumentation uses.
+func RecordSQL(ctx context.Context, query string, duration time.Duration, rows int, err error) {
 	metrics, ok := ctx.Value(profileContextKey{}).(*Metrics)
 	if !ok || metrics == nil {
 		return

@@ -2,30 +2,20 @@ package profiling
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"time"
 )
 
-// SQLHook provides hooks for SQL operations
-type SQLHook struct {
-	profiler *Profiler
-}
-
-// NewSQLHook creates a new SQL hook
-func NewSQLHook(profiler *Profiler) *SQLHook {
-	return &SQLHook{profiler: profiler}
-}
-
-// WrapDriver wraps a SQL driver with profiling hooks
-func (h *SQLHook) WrapDriver(d driver.Driver) driver.Driver {
-	return &hookedDriver{driver: d, hook: h}
+// WrapDriver wraps a database/sql driver so queries executed with a request
+// context are recorded on that request's profile. Queries executed with
+// contexts that carry no profile are passed through untouched.
+func WrapDriver(d driver.Driver) driver.Driver {
+	return &hookedDriver{driver: d}
 }
 
 // hookedDriver wraps a driver.Driver with hooks
 type hookedDriver struct {
 	driver driver.Driver
-	hook   *SQLHook
 }
 
 func (d *hookedDriver) Open(name string) (driver.Conn, error) {
@@ -33,13 +23,12 @@ func (d *hookedDriver) Open(name string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &hookedConn{conn: conn, hook: d.hook}, nil
+	return &hookedConn{conn: conn}, nil
 }
 
 // hookedConn wraps a driver.Conn with hooks
 type hookedConn struct {
 	conn driver.Conn
-	hook *SQLHook
 }
 
 func (c *hookedConn) Prepare(query string) (driver.Stmt, error) {
@@ -47,7 +36,7 @@ func (c *hookedConn) Prepare(query string) (driver.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &hookedStmt{stmt: stmt, query: query, hook: c.hook}, nil
+	return &hookedStmt{stmt: stmt, query: query}, nil
 }
 
 func (c *hookedConn) Close() error {
@@ -59,7 +48,7 @@ func (c *hookedConn) Begin() (driver.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &hookedTx{tx: tx, hook: c.hook}, nil
+	return &hookedTx{tx: tx}, nil
 }
 
 // Implement other required methods
@@ -76,12 +65,12 @@ func (c *hookedConn) PrepareContext(ctx context.Context, query string) (driver.S
 	}
 
 	duration := time.Since(start)
-	c.hook.profiler.RecordSQLQuery(ctx, query, duration, 0, err)
+	RecordSQL(ctx, query, duration, 0, err)
 
 	if err != nil {
 		return nil, err
 	}
-	return &hookedStmt{stmt: stmt, query: query, hook: c.hook}, nil
+	return &hookedStmt{stmt: stmt, query: query}, nil
 }
 
 func (c *hookedConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
@@ -111,7 +100,7 @@ func (c *hookedConn) ExecContext(ctx context.Context, query string, args []drive
 		}
 	}
 
-	c.hook.profiler.RecordSQLQuery(ctx, query, duration, int(rows), err)
+	RecordSQL(ctx, query, duration, int(rows), err)
 
 	return result, err
 }
@@ -135,7 +124,7 @@ func (c *hookedConn) QueryContext(ctx context.Context, query string, args []driv
 	}
 
 	duration := time.Since(start)
-	c.hook.profiler.RecordSQLQuery(ctx, query, duration, 0, err)
+	RecordSQL(ctx, query, duration, 0, err)
 
 	return rows, err
 }
@@ -153,14 +142,13 @@ func (c *hookedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 	if err != nil {
 		return nil, err
 	}
-	return &hookedTx{tx: tx, hook: c.hook}, nil
+	return &hookedTx{tx: tx}, nil
 }
 
 // hookedStmt wraps a driver.Stmt with hooks
 type hookedStmt struct {
 	stmt  driver.Stmt
 	query string
-	hook  *SQLHook
 }
 
 func (s *hookedStmt) Close() error {
@@ -184,7 +172,7 @@ func (s *hookedStmt) Exec(args []driver.Value) (driver.Result, error) {
 	}
 
 	// Use background context as we don't have access to request context here
-	s.hook.profiler.RecordSQLQuery(context.Background(), s.query, duration, int(rows), err)
+	RecordSQL(context.Background(), s.query, duration, int(rows), err)
 
 	return result, err
 }
@@ -194,7 +182,7 @@ func (s *hookedStmt) Query(args []driver.Value) (driver.Rows, error) {
 	rows, err := s.stmt.Query(args)
 	duration := time.Since(start)
 
-	s.hook.profiler.RecordSQLQuery(context.Background(), s.query, duration, 0, err)
+	RecordSQL(context.Background(), s.query, duration, 0, err)
 
 	return rows, err
 }
@@ -224,7 +212,7 @@ func (s *hookedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) 
 		}
 	}
 
-	s.hook.profiler.RecordSQLQuery(ctx, s.query, duration, int(rows), err)
+	RecordSQL(ctx, s.query, duration, int(rows), err)
 
 	return result, err
 }
@@ -246,15 +234,14 @@ func (s *hookedStmt) QueryContext(ctx context.Context, args []driver.NamedValue)
 	}
 
 	duration := time.Since(start)
-	s.hook.profiler.RecordSQLQuery(ctx, s.query, duration, 0, err)
+	RecordSQL(ctx, s.query, duration, 0, err)
 
 	return rows, err
 }
 
 // hookedTx wraps a driver.Tx with hooks
 type hookedTx struct {
-	tx   driver.Tx
-	hook *SQLHook
+	tx driver.Tx
 }
 
 func (t *hookedTx) Commit() error {
@@ -265,8 +252,3 @@ func (t *hookedTx) Rollback() error {
 	return t.tx.Rollback()
 }
 
-// RegisterSQLDriver registers a wrapped SQL driver with profiling support
-func RegisterSQLDriver(name string, driver driver.Driver, profiler *Profiler) {
-	hook := NewSQLHook(profiler)
-	sql.Register(name+"-profiled", hook.WrapDriver(driver))
-}
