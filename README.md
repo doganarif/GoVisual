@@ -87,6 +87,30 @@ handler := govisual.Wrap(
 )
 ```
 
+## MCP: Let Your Coding Agent Debug
+
+The `mcp` module serves captured traffic to AI coding agents over the Model Context Protocol. Claude Code (or any MCP client) can list requests, pull full debug context — headers, bodies, logs, SQL, panic stacks — replay requests against your running app, and `diff_replay` a request after a fix to verify the behavior actually changed.
+
+```bash
+go get github.com/doganarif/govisual/mcp
+```
+
+```go
+st := store.NewMemory(200)
+app := govisual.Wrap(mux, govisual.WithStore(st))
+
+root := http.NewServeMux()
+root.Handle("/mcp", gvmcp.Handler(st, gvmcp.WithBaseURL("http://localhost:8080")))
+root.Handle("/", app)
+http.ListenAndServe(":8080", root)
+```
+
+```bash
+claude mcp add govisual --transport http http://localhost:8080/mcp
+```
+
+Tools: `get_last_error`, `list_requests`, `get_request`, `search_requests`, `get_stats`, `get_debug_context`, `replay_request`, `diff_replay`. Responses are token-aware (bounded lists, capped body excerpts). The endpoint is loopback-only by default and replays can only target your own app, never arbitrary hosts.
+
 ## SQL Query Capture
 
 Wrap your database driver and every query executed with a request's context lands on that request's profile — durations, affected rows, and errors:

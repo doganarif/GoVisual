@@ -68,7 +68,7 @@ jobs:
           REDIS_CONN: redis://localhost:6379/0
           MONGO_URI: mongodb://root:root@localhost:27017
         run: |
-          for m in store/postgres store/redis store/mongodb store/sqlite telemetry; do
+          for m in store/postgres store/redis store/mongodb store/sqlite telemetry mcp; do
             echo "== $m"
             (cd "$m" && go test -v ./...)
           done
