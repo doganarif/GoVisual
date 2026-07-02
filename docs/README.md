@@ -18,8 +18,9 @@ Welcome to the GoVisual documentation. This documentation provides comprehensive
 
 ### Integration
 
+- [Claude Code / MCP](claude-code.md)
 - [OpenTelemetry Integration](opentelemetry.md)
-- [Storage Backends](storage-backends.md) - _New!_
+- [Storage Backends](storage-backends.md)
 
 ### Examples
 

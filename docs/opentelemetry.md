@@ -1,13 +1,11 @@
 # Using GoVisual with OpenTelemetry
 
-GoVisual includes OpenTelemetry integration, allowing you to export telemetry data to your preferred backend.
+OpenTelemetry export lives in its own module, `github.com/doganarif/govisual/telemetry`, so the OTel SDK and its gRPC stack stay out of builds that don't use them.
 
 ## Prerequisites
 
-To use OpenTelemetry with GoVisual, you need:
-
 1. An OTLP-compatible collector running (such as Jaeger with OTLP enabled)
-2. GoVisual v1.0.0 or later
+2. The telemetry module: `go get github.com/doganarif/govisual/telemetry`
 
 ## Quick Start
 
@@ -24,31 +22,41 @@ docker run -d --name jaeger \
   jaegertracing/all-in-one:latest
 ```
 
-### 2. Enable OpenTelemetry in your Go application
+### 2. Wrap your handler
 
 ```go
 package main
 
 import (
+    "context"
+    "log"
     "net/http"
-    "github.com/doganarif/govisual"
+
+    "github.com/doganarif/govisual/telemetry"
+    "github.com/doganarif/govisual/v2"
 )
 
 func main() {
     mux := http.NewServeMux()
-
-    // Add your routes
     mux.HandleFunc("/api/users", userHandler)
 
-    // Enable GoVisual with OpenTelemetry
-    handler := govisual.Wrap(
-        mux,
-        govisual.WithOpenTelemetry(true),               // Enable OpenTelemetry
-        govisual.WithServiceName("my-service"),         // Set service name
-        govisual.WithServiceVersion("1.0.0"),           // Set service version
-        govisual.WithOTelEndpoint("localhost:4317"),    // OTLP exporter endpoint
-        govisual.WithRequestBodyLogging(true),          // Log request bodies
-        govisual.WithResponseBodyLogging(true),         // Log response bodies
+    // Trace the application handler. Wrapping the mux (not the final
+    // handler) keeps the govisual dashboard out of your traces.
+    traced, shutdown, err := telemetry.Wrap(mux, telemetry.Config{
+        ServiceName:    "my-service",
+        ServiceVersion: "1.0.0",
+        Endpoint:       "localhost:4317",
+        Insecure:       true,
+        Exporter:       telemetry.ExporterOTLP,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer shutdown(context.Background())
+
+    handler := govisual.Wrap(traced,
+        govisual.WithRequestBodyLogging(true),
+        govisual.WithResponseBodyLogging(true),
     )
 
     http.ListenAndServe(":8080", handler)
@@ -57,69 +65,38 @@ func main() {
 
 ### 3. Run the example
 
-You can run the included example in the repository:
-
 ```bash
 cd cmd/examples/otel
-docker-compose up -d
+docker-compose up -d   # starts Jaeger
 go run main.go
 ```
 
-Then visit:
+Traces appear in the Jaeger UI at http://localhost:16686.
 
-- GoVisual dashboard: http://localhost:8080/\_\_viz
-- Jaeger UI: http://localhost:16686
+## Configuration
 
-## Configuration Options
+`telemetry.Config` fields:
 
-| Option                       | Description                            | Default            |
-| ---------------------------- | -------------------------------------- | ------------------ |
-| `WithOpenTelemetry(bool)`    | Enable OpenTelemetry integration       | `false`            |
-| `WithServiceName(string)`    | Set the service name for OpenTelemetry | `"govisual"`       |
-| `WithServiceVersion(string)` | Set the service version                | `"dev"`            |
-| `WithOTelEndpoint(string)`   | Set the OTLP exporter endpoint         | `"localhost:4317"` |
+| Field            | Description                                         | Default |
+| ---------------- | --------------------------------------------------- | ------- |
+| `ServiceName`    | Service name attached to every span                 |         |
+| `ServiceVersion` | Service version attached to every span              |         |
+| `Endpoint`       | OTLP gRPC endpoint                                  |         |
+| `Insecure`       | Skip TLS for the OTLP connection (local dev)        | `false` |
+| `Exporter`       | `ExporterOTLP`, `ExporterStdout`, or `ExporterNoop` |         |
 
-## How It Works
+`telemetry.Wrap` returns the instrumented handler and a shutdown function that flushes pending spans — call it on exit. For finer control, `telemetry.InitTracer(ctx, cfg)` sets up the exporter and `telemetry.NewMiddleware(handler, name, version)` instruments a handler separately.
 
-When OpenTelemetry is enabled:
+## Span propagation
 
-1. GoVisual initializes an OpenTelemetry tracer with the provided service name and version
-2. HTTP requests passing through GoVisual are automatically traced
-3. Trace data is exported to the configured OTLP endpoint
-4. The original GoVisual dashboard continues to work alongside OpenTelemetry
-
-## Adding Custom Spans
-
-You can add custom spans within your request handlers:
+The middleware extracts incoming W3C trace context headers, so spans join distributed traces started upstream. Handlers can start child spans with the global tracer:
 
 ```go
-func myHandler(w http.ResponseWriter, r *http.Request) {
-    // Get the context from the request (it contains the parent span from GoVisual)
-    ctx := r.Context()
-
-    // Start a new child span
-    ctx, span := otel.Tracer("my-service").Start(ctx, "my-operation")
-    defer span.End()
-
-    // Add attributes to the span
-    span.SetAttributes(attribute.String("user.id", "123"))
-
-    // Create nested spans for detailed operations
-    _, dbSpan := otel.Tracer("my-service").Start(ctx, "database.query")
-    // ... do database work
-    dbSpan.End()
-
-    // Respond to the client
-    w.Write([]byte("Hello, world!"))
-}
+ctx, span := otel.Tracer("my-service").Start(r.Context(), "database.query")
+defer span.End()
 ```
 
-## Troubleshooting
+## Related Documentation
 
-If you encounter issues:
-
-1. Check that your OpenTelemetry collector is running and accessible
-2. Ensure the endpoint in `WithOTelEndpoint()` matches your collector configuration
-3. Look for initialization errors in your application logs
-
-To see a full working example, refer to the `cmd/examples/otel` directory in the repository.
+- [Configuration Options](configuration.md)
+- [Quick Start Guide](quick-start.md)
