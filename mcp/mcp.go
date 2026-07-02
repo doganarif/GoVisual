@@ -24,6 +24,7 @@ type config struct {
 	baseURL     string
 	allowRemote bool
 	token       string
+	activity    *store.ActivityLog
 }
 
 // Option configures the MCP handler.
@@ -47,6 +48,13 @@ func WithAllowRemote() Option {
 // whenever WithAllowRemote is used.
 func WithToken(token string) Option {
 	return func(c *config) { c.token = token }
+}
+
+// WithActivityLog records every tool call into the given log so the
+// govisual dashboard can surface them on its Agents tab. Pass the same
+// *store.ActivityLog to govisual.Wrap via govisual.WithActivityLog.
+func WithActivityLog(a *store.ActivityLog) Option {
+	return func(c *config) { c.activity = a }
 }
 
 // Handler returns the MCP endpoint for a govisual store. Use the same store
@@ -75,9 +83,9 @@ func Handler(st store.Store, opts ...Option) http.Handler {
 
 func newServer(st store.Store, cfg *config) *sdk.Server {
 	srv := sdk.NewServer(&sdk.Implementation{Name: "govisual", Version: "2.0.0"}, nil)
-	registerReadTools(srv, st)
+	registerReadTools(srv, st, cfg)
 	registerReplayTools(srv, st, cfg)
-	registerActionTools(srv, st)
+	registerActionTools(srv, st, cfg)
 	return srv
 }
 

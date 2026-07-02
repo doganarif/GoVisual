@@ -55,7 +55,7 @@ func registerReplayTools(srv *sdk.Server, st store.Store, cfg *config) {
 		Description: "Re-send a captured request against the application, optionally overriding method, path, " +
 			"headers, or body. The destination host is fixed to the application — only the request shape is " +
 			"yours to change. Returns status, duration and a body excerpt.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args replayArgs) (*sdk.CallToolResult, replayResult, error) {
+	}, recorded(cfg, "replay_request", true, func(ctx context.Context, req *sdk.CallToolRequest, args replayArgs) (*sdk.CallToolResult, replayResult, error) {
 		l, ok := st.Get(args.ID)
 		if !ok {
 			return nil, replayResult{}, fmt.Errorf("no request with id %q", args.ID)
@@ -65,14 +65,14 @@ func registerReplayTools(srv *sdk.Server, st store.Store, cfg *config) {
 			return nil, replayResult{}, err
 		}
 		return nil, *res, nil
-	})
+	}))
 
 	sdk.AddTool(srv, &sdk.Tool{
 		Name: "diff_replay",
 		Description: "Replay a captured request unchanged against the current code and diff the outcome " +
 			"against the original capture: status, body, timing. Use after changing code to verify a fix " +
 			"or check for regressions.",
-	}, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, diffResult, error) {
+	}, recorded(cfg, "diff_replay", true, func(ctx context.Context, req *sdk.CallToolRequest, args idArgs) (*sdk.CallToolResult, diffResult, error) {
 		l, ok := st.Get(args.ID)
 		if !ok {
 			return nil, diffResult{}, fmt.Errorf("no request with id %q", args.ID)
@@ -104,7 +104,7 @@ func registerReplayTools(srv *sdk.Server, st store.Store, cfg *config) {
 			d.Summary += " (original capture has no response body; enable WithResponseBodyLogging for real body diffs)"
 		}
 		return nil, d, nil
-	})
+	}))
 }
 
 func replay(ctx context.Context, cfg *config, l *store.RequestLog, args replayArgs) (*replayResult, error) {

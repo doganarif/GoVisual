@@ -36,6 +36,8 @@ type HandlerOptions struct {
 	// system-info endpoint will surface. Anything not in this set is omitted
 	// entirely so an attacker cannot infer existence.
 	ExposeEnvVars []string
+	// ActivityLog, if set, powers /api/agent-activity.
+	ActivityLog *store.ActivityLog
 }
 
 // Handler is the HTTP handler for the dashboard
@@ -95,6 +97,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			h.handleSystemInfo(w, r)
+		case "/api/agent-activity":
+			h.handleAgentActivity(w, r)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte(`{"error": "Not found"}`))
@@ -628,6 +632,20 @@ func (h *Handler) handleBottlenecks(w http.ResponseWriter, r *http.Request) {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	encoder.Encode(summaries)
+}
+
+// handleAgentActivity returns the most recent coding-agent tool calls. Empty
+// when no ActivityLog is configured, so the UI can render "no activity yet"
+// without needing a separate probe.
+func (h *Handler) handleAgentActivity(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var entries []store.ActivityEntry
+	if h.opts.ActivityLog != nil {
+		entries = h.opts.ActivityLog.List(200)
+	}
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(entries)
 }
 
 // handleSystemInfo exposes coarse runtime info plus an *explicit allowlist* of
