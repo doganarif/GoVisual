@@ -123,3 +123,22 @@ func TestPanicIsCapturedWithProfiling(t *testing.T) {
 		t.Fatalf("panic not recorded under profiling: %s", body)
 	}
 }
+
+func TestEventAttachesToRequest(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/work", func(w http.ResponseWriter, r *http.Request) {
+		Event(r.Context(), "cache miss", "key", "user:7")
+	})
+	h := Wrap(mux)
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/work", nil))
+
+	body := capturedRequests(t, h)
+	if !strings.Contains(body, "cache miss") || !strings.Contains(body, "user:7") {
+		t.Fatalf("event not attached: %s", body)
+	}
+}
+
+func TestEventOutsideRequestIsNoOp(t *testing.T) {
+	Event(t.Context(), "orphan event", "k", "v")
+}
