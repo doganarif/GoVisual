@@ -142,3 +142,24 @@ func TestEventAttachesToRequest(t *testing.T) {
 func TestEventOutsideRequestIsNoOp(t *testing.T) {
 	Event(t.Context(), "orphan event", "k", "v")
 }
+
+func TestFaviconIsIgnoredByDefault(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/hello", func(w http.ResponseWriter, r *http.Request) {})
+	h := Wrap(mux)
+
+	for _, path := range []string{"/hello", "/favicon.ico"} {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+	}
+
+	body := capturedRequests(t, h)
+	if !strings.Contains(body, "/hello") {
+		t.Fatalf("expected /hello captured: %s", body)
+	}
+	if strings.Contains(body, "/favicon.ico") {
+		t.Fatalf("expected /favicon.ico ignored: %s", body)
+	}
+}
