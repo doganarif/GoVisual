@@ -1,4 +1,4 @@
-package middleware
+package telemetry
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func TestOTelMiddleware_ServeHTTP(t *testing.T) {
+func TestMiddleware_ServeHTTP(t *testing.T) {
 	// Set up a test tracer provider and span recorder
 	sr := sdktrace.NewSimpleSpanProcessor(&testSpanExporter{})
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
@@ -25,8 +25,8 @@ func TestOTelMiddleware_ServeHTTP(t *testing.T) {
 		io.WriteString(w, "traced")
 	})
 
-	// Wrap with OTelMiddleware
-	middleware := NewOTelMiddleware(handler, "test-service", "v1.0")
+	// Wrap with Middleware
+	middleware := NewMiddleware(handler, "test-service", "v1.0")
 
 	req := httptest.NewRequest("GET", "/hello", nil)
 	req.Header.Set("User-Agent", "TestClient")

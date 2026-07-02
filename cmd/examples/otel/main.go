@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/doganarif/govisual/telemetry"
 	"github.com/doganarif/govisual/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -36,27 +38,31 @@ func main() {
 	mux.HandleFunc("/api/search", searchHandler)
 	mux.HandleFunc("/api/health", healthHandler)
 
-	// Configure GoVisual options
-	options := []govisual.Option{
-		govisual.WithRequestBodyLogging(true),
-		govisual.WithResponseBodyLogging(true),
-		govisual.WithIgnorePaths("/api/health"),
-	}
-
-	// Add OpenTelemetry options if enabled
+	// Trace the application handler; wrapping the mux (not the final
+	// handler) keeps the govisual dashboard out of the traces.
+	var app http.Handler = mux
 	if enableOTel {
-		options = append(options,
-			govisual.WithOpenTelemetry(true),
-			govisual.WithServiceName("govisual-otel-example"),
-			govisual.WithServiceVersion("1.0.0"),
-			govisual.WithOTelEndpoint("localhost:4317"),
-			govisual.WithOTelExporter(otelExporter),
-		)
+		traced, shutdown, err := telemetry.Wrap(mux, telemetry.Config{
+			ServiceName:    "govisual-otel-example",
+			ServiceVersion: "1.0.0",
+			Endpoint:       "localhost:4317",
+			Insecure:       true,
+			Exporter:       otelExporter,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize OpenTelemetry: %v", err)
+		}
+		defer shutdown(context.Background())
+		app = traced
 		log.Printf("🔭 OpenTelemetry enabled with %s exporter!", otelExporter)
 	}
 
 	// Wrap with GoVisual
-	handler := govisual.Wrap(mux, options...)
+	handler := govisual.Wrap(app,
+		govisual.WithRequestBodyLogging(true),
+		govisual.WithResponseBodyLogging(true),
+		govisual.WithIgnorePaths("/api/health"),
+	)
 	log.Printf("🔍 Request visualizer enabled at http://localhost:%d/__viz", port)
 
 	// Start the server

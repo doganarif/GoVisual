@@ -62,13 +62,13 @@ jobs:
       - name: Test core module
         run: go test -v ./...
 
-      - name: Test storage modules
+      - name: Test submodules
         env:
           PG_CONN: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
           REDIS_CONN: redis://localhost:6379/0
           MONGO_URI: mongodb://root:root@localhost:27017
         run: |
-          for m in store/postgres store/redis store/mongodb store/sqlite; do
+          for m in store/postgres store/redis store/mongodb store/sqlite telemetry; do
             echo "== $m"
             (cd "$m" && go test -v ./...)
           done

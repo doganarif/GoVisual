@@ -6,21 +6,19 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/doganarif/govisual/v2/internal/dashboard"
 	"github.com/doganarif/govisual/v2/internal/middleware"
 	"github.com/doganarif/govisual/v2/internal/profiling"
-	"github.com/doganarif/govisual/v2/internal/telemetry"
 	"github.com/doganarif/govisual/v2/store"
 )
 
 // Wrap wraps an http.Handler with the govisual request visualization middleware
 // and mounts the dashboard at config.DashboardPath. Pass options to customize
-// behavior. To trigger graceful shutdown of storage and telemetry resources,
-// pass WithShutdownContext — govisual will release its resources when that
-// context is cancelled. Govisual deliberately does NOT register a signal
-// handler; that is the host application's job.
+// behavior. To trigger graceful shutdown of the storage backend, pass
+// WithShutdownContext — govisual will release its resources when that context
+// is cancelled. Govisual deliberately does NOT register a signal handler;
+// that is the host application's job.
 func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	config := defaultConfig()
 	for _, opt := range opts {
@@ -56,47 +54,18 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		)
 	}
 
-	var otelShutdown func(context.Context) error
-	if config.EnableOpenTelemetry {
-		ctx := context.Background()
-		otelConfig := telemetry.Config{
-			ServiceName:    config.ServiceName,
-			ServiceVersion: config.ServiceVersion,
-			Endpoint:       config.OTelEndpoint,
-			Insecure:       config.OTelInsecure,
-			Exporter:       config.OTelExporter,
-		}
-		shutdown, err := telemetry.InitTracer(ctx, otelConfig)
-		if err != nil {
-			log.Printf("govisual: failed to initialize OpenTelemetry: %v", err)
-		} else {
-			log.Printf("govisual: OpenTelemetry initialized (service=%s endpoint=%s)", config.ServiceName, config.OTelEndpoint)
-			otelShutdown = shutdown
-			wrapped = middleware.NewOTelMiddleware(wrapped, config.ServiceName, config.ServiceVersion)
-		}
-	}
-
 	if config.ShutdownContext != nil {
 		// NOTE: this goroutine waits on ctx.Done() and is retained for the
 		// process lifetime if the context is never cancelled. Callers passing a
 		// non-cancellable context (e.g. context.Background()) should be aware
 		// of this — in tests, prefer t.Context() or a cancellable context.
-		go func(ctx context.Context, st store.Store, shutdown func(context.Context) error) {
+		go func(ctx context.Context, st store.Store) {
 			<-ctx.Done()
 			log.Printf("govisual: shutdown context cancelled, releasing resources")
-			if shutdown != nil {
-				// Give OTel a real deadline to flush spans, independent of
-				// the parent context (which is already cancelled).
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if err := shutdown(shutdownCtx); err != nil {
-					log.Printf("govisual: error shutting down OpenTelemetry: %v", err)
-				}
-				cancel()
-			}
 			if err := st.Close(); err != nil {
 				log.Printf("govisual: error closing storage: %v", err)
 			}
-		}(config.ShutdownContext, requestStore, otelShutdown)
+		}(config.ShutdownContext, requestStore)
 	}
 
 	dashHandler := dashboard.NewHandler(requestStore, profiler, dashboard.HandlerOptions{
