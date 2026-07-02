@@ -80,7 +80,7 @@ func WrapWithProfilingAndLimits(handler http.Handler, store store.Store, logRequ
 			}
 		}
 
-		reqLog.StatusCode = resWriter.statusCode
+		reqLog.StatusCode = resWriter.status()
 
 		tracer.EndTrace(nil)
 		tracer.Complete()
@@ -111,8 +111,8 @@ func WrapWithProfilingAndLimits(handler http.Handler, store store.Store, logRequ
 			}
 		}
 
-		if logResponseBody && resWriter.buffer != nil {
-			reqLog.ResponseBody = resWriter.buffer.String()
+		if logResponseBody {
+			reqLog.ResponseBody = resWriter.body()
 		}
 
 		_ = store.Add(reqLog)

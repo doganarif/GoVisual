@@ -78,6 +78,25 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// status returns the captured status code. It takes the lock so it stays
+// safe even if a handler goroutine is still writing.
+func (w *responseWriter) status() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.statusCode
+}
+
+// body returns a snapshot of the captured response body, or "" when body
+// logging is off.
+func (w *responseWriter) body() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.buffer == nil {
+		return ""
+	}
+	return w.buffer.String()
+}
+
 // Flush implements http.Flusher, forwarding to the underlying writer if it supports it.
 func (w *responseWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
@@ -161,7 +180,7 @@ func WrapWithLimits(handler http.Handler, store store.Store, logRequestBody, log
 		start := time.Now()
 		handler.ServeHTTP(resWriter, r)
 		reqLog.Duration = time.Since(start).Milliseconds()
-		reqLog.StatusCode = resWriter.statusCode
+		reqLog.StatusCode = resWriter.status()
 
 		// Extract user-provided middleware-stack information from context
 		if v := r.Context().Value(MiddlewareStackKey{}); v != nil {
@@ -182,8 +201,8 @@ func WrapWithLimits(handler http.Handler, store store.Store, logRequestBody, log
 			}
 		}
 
-		if logResponseBody && resWriter.buffer != nil {
-			reqLog.ResponseBody = resWriter.buffer.String()
+		if logResponseBody {
+			reqLog.ResponseBody = resWriter.body()
 		}
 
 		if err := store.Add(reqLog); err != nil {

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/doganarif/govisual/internal/model"
@@ -93,4 +94,26 @@ func TestWrapMiddleware(t *testing.T) {
 	if log.Duration < 0 {
 		t.Errorf("expected Duration > 0, got %d", log.Duration)
 	}
+}
+
+func TestStatusReadRacesWithLateWrites(t *testing.T) {
+	store := &mockStore{}
+	var wg sync.WaitGroup
+
+	// A handler that leaks a goroutine still writing after it returns; the
+	// middleware's post-handler reads must not race with it.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 100; i++ {
+				w.Write([]byte("late"))
+			}
+		}()
+	})
+
+	wrapped := Wrap(handler, store, false, true, &mockPathMatcher{})
+	rec := httptest.NewRecorder()
+	wrapped.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	wg.Wait()
 }
