@@ -1,28 +1,28 @@
+// Package store defines the request log model and the storage interface
+// govisual persists captured requests through. The in-memory store lives
+// here; database-backed stores are separate modules under store/ so their
+// drivers stay out of builds that don't use them.
 package store
 
-import (
-	"regexp"
+import "regexp"
 
-	"github.com/doganarif/govisual/internal/model"
-)
-
-// Store defines the interface for all storage backends
+// Store is the interface all storage backends implement.
 type Store interface {
 	// Add stores a new request log. Returns an error so callers can surface
 	// storage failures (otherwise the dashboard silently drops entries).
-	Add(log *model.RequestLog) error
+	Add(log *RequestLog) error
 
 	// Get retrieves a specific request log by its ID
-	Get(id string) (*model.RequestLog, bool)
+	Get(id string) (*RequestLog, bool)
 
 	// GetAll returns all stored request logs
-	GetAll() []*model.RequestLog
+	GetAll() []*RequestLog
 
 	// Clear clears all stored request logs
 	Clear() error
 
 	// GetLatest returns the n most recent request logs
-	GetLatest(n int) []*model.RequestLog
+	GetLatest(n int) []*RequestLog
 
 	// Close closes any open connections
 	Close() error

@@ -11,8 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/v2/store"
 )
 
 // DefaultMaxBodyBytes is the default cap for captured request/response body size.
@@ -139,13 +138,13 @@ func readBodyCapped(r io.Reader, maxBody int) ([]byte, bool, error) {
 }
 
 // Wrap wraps an http.Handler with the request visualization middleware
-func Wrap(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher) http.Handler {
-	return WrapWithLimits(handler, store, logRequestBody, logResponseBody, pathMatcher, DefaultMaxBodyBytes)
+func Wrap(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher) http.Handler {
+	return WrapWithLimits(handler, st, logRequestBody, logResponseBody, pathMatcher, DefaultMaxBodyBytes)
 }
 
 // WrapWithLimits is identical to Wrap but allows the caller to specify the maximum number of
 // captured body bytes (per request and per response). A value <= 0 disables the cap.
-func WrapWithLimits(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, maxBody int) http.Handler {
+func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, maxBody int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
@@ -154,7 +153,7 @@ func WrapWithLimits(handler http.Handler, store store.Store, logRequestBody, log
 		}
 
 		// Create a new request log
-		reqLog := model.NewRequestLog(r)
+		reqLog := store.NewRequestLog(r)
 
 		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {
@@ -205,7 +204,7 @@ func WrapWithLimits(handler http.Handler, store store.Store, logRequestBody, log
 			reqLog.ResponseBody = resWriter.body()
 		}
 
-		if err := store.Add(reqLog); err != nil {
+		if err := st.Add(reqLog); err != nil {
 			// Storage errors are surfaced on the log entry's Error field so they
 			// remain visible to anyone inspecting the dashboard backend; we do
 			// not block the request path.

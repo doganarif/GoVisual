@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/doganarif/govisual"
-	"github.com/doganarif/govisual/internal/middleware"
+	"github.com/doganarif/govisual/v2"
+	"github.com/doganarif/govisual/v2/internal/middleware"
 	_ "github.com/mattn/go-sqlite3"
 )
 

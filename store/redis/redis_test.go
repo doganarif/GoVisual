@@ -1,4 +1,4 @@
-package store
+package redis
 
 import (
 	"context"
@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
+	"github.com/doganarif/govisual/v2/store/storetest"
 )
 
 func TestRedisStore(t *testing.T) {
@@ -16,12 +17,12 @@ func TestRedisStore(t *testing.T) {
 		t.Skip("REDIS_CONN not set; skipping Redis test")
 	}
 
-	store, err := NewRedisStore(connStr, 10, 3600)
+	s, err := New(connStr, 10, 3600)
 	if err != nil {
 		t.Fatalf("failed to create Redis store: %v", err)
 	}
 
-	runStoreTests(t, store)
+	storetest.Run(t, s)
 }
 
 func TestRedisStoreOrderStableForEqualTimestamps(t *testing.T) {
@@ -30,23 +31,23 @@ func TestRedisStoreOrderStableForEqualTimestamps(t *testing.T) {
 		t.Skip("REDIS_CONN not set; skipping Redis test")
 	}
 
-	store, err := NewRedisStore(connStr, 10, 3600)
+	s, err := New(connStr, 10, 3600)
 	if err != nil {
 		t.Fatalf("failed to create Redis store: %v", err)
 	}
-	defer store.Close()
-	defer store.Clear()
+	defer s.Close()
+	defer s.Clear()
 
 	// Same timestamp for every entry: order must come from the sorted set
 	// (reverse-lexicographic on ID for equal scores), not map iteration.
 	ts := time.Now()
 	for _, id := range []string{"a", "b", "c", "d"} {
-		store.Add(&model.RequestLog{ID: id, Timestamp: ts, Method: "GET", Path: "/x"})
+		s.Add(&store.RequestLog{ID: id, Timestamp: ts, Method: "GET", Path: "/x"})
 	}
 
 	want := []string{"d", "c", "b", "a"}
 	for run := 0; run < 5; run++ {
-		all := store.GetAll()
+		all := s.GetAll()
 		if len(all) != len(want) {
 			t.Fatalf("expected %d logs, got %d", len(want), len(all))
 		}
@@ -64,28 +65,28 @@ func TestRedisStorePrunesExpiredIDs(t *testing.T) {
 		t.Skip("REDIS_CONN not set; skipping Redis test")
 	}
 
-	store, err := NewRedisStore(connStr, 10, 3600)
+	s, err := New(connStr, 10, 3600)
 	if err != nil {
 		t.Fatalf("failed to create Redis store: %v", err)
 	}
-	defer store.Close()
-	defer store.Clear()
+	defer s.Close()
+	defer s.Clear()
 
-	store.Add(&model.RequestLog{ID: "keep", Timestamp: time.Now(), Method: "GET", Path: "/x"})
-	store.Add(&model.RequestLog{ID: "gone", Timestamp: time.Now(), Method: "GET", Path: "/x"})
+	s.Add(&store.RequestLog{ID: "keep", Timestamp: time.Now(), Method: "GET", Path: "/x"})
+	s.Add(&store.RequestLog{ID: "gone", Timestamp: time.Now(), Method: "GET", Path: "/x"})
 
 	// Simulate TTL expiry: the key vanishes but the sorted set still has the ID.
 	ctx := context.Background()
-	if err := store.client.Del(ctx, store.keyPrefix+"gone").Err(); err != nil {
+	if err := s.client.Del(ctx, s.keyPrefix+"gone").Err(); err != nil {
 		t.Fatalf("failed to delete key: %v", err)
 	}
 
-	all := store.GetAll()
+	all := s.GetAll()
 	if len(all) != 1 || all[0].ID != "keep" {
 		t.Fatalf("expected only 'keep', got %v", ids(all))
 	}
 
-	card, err := store.client.ZCard(ctx, store.keyPrefix+"logs").Result()
+	card, err := s.client.ZCard(ctx, s.keyPrefix+"logs").Result()
 	if err != nil {
 		t.Fatalf("zcard: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestRedisStorePrunesExpiredIDs(t *testing.T) {
 	}
 }
 
-func ids(logs []*model.RequestLog) []string {
+func ids(logs []*store.RequestLog) []string {
 	out := make([]string, len(logs))
 	for i, l := range logs {
 		out[i] = l.ID
@@ -108,16 +109,16 @@ func TestRedisStoreCleanupKeepsNewest(t *testing.T) {
 		t.Skip("REDIS_CONN not set; skipping Redis test")
 	}
 
-	store, err := NewRedisStore(connStr, 10, 3600)
+	s, err := New(connStr, 10, 3600)
 	if err != nil {
 		t.Fatalf("failed to create Redis store: %v", err)
 	}
-	defer store.Close()
-	defer store.Clear()
+	defer s.Close()
+	defer s.Clear()
 
 	base := time.Now()
 	for i := 0; i < 25; i++ {
-		store.Add(&model.RequestLog{
+		s.Add(&store.RequestLog{
 			ID:        fmt.Sprintf("req-%02d", i),
 			Timestamp: base.Add(time.Duration(i) * time.Second),
 			Method:    "GET",
@@ -125,9 +126,9 @@ func TestRedisStoreCleanupKeepsNewest(t *testing.T) {
 		})
 	}
 
-	store.cleanup()
+	s.cleanup()
 
-	all := store.GetAll()
+	all := s.GetAll()
 	if len(all) != 10 {
 		t.Fatalf("expected capacity 10 after cleanup, got %d", len(all))
 	}

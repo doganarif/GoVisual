@@ -1,4 +1,4 @@
-package store
+package redis
 
 import (
 	"context"
@@ -8,12 +8,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
 	"github.com/go-redis/redis/v8"
 )
 
-// RedisStore implements the Store interface with Redis as backend
-type RedisStore struct {
+// cleanupEveryN runs the capacity trim once every N successful inserts,
+// amortizing its cost instead of paying it on every request.
+const cleanupEveryN = 32
+
+// Store implements the Store interface with Redis as backend
+type Store struct {
 	client      *redis.Client
 	keyPrefix   string
 	capacity    int
@@ -21,8 +25,8 @@ type RedisStore struct {
 	insertCount atomic.Uint64
 }
 
-// NewRedisStore creates a new Redis-backed store
-func NewRedisStore(connStr string, capacity int, ttlSeconds int) (*RedisStore, error) {
+// NewStore creates a new Redis-backed store
+func New(connStr string, capacity int, ttlSeconds int) (*Store, error) {
 	if capacity <= 0 {
 		capacity = 100
 	}
@@ -44,7 +48,7 @@ func NewRedisStore(connStr string, capacity int, ttlSeconds int) (*RedisStore, e
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	return &RedisStore{
+	return &Store{
 		client:    client,
 		keyPrefix: "govisual:",
 		capacity:  capacity,
@@ -54,11 +58,11 @@ func NewRedisStore(connStr string, capacity int, ttlSeconds int) (*RedisStore, e
 
 // opCtx returns a short-lived context for a single Redis call. Stores must not
 // hang onto a context for their entire lifetime.
-func (s *RedisStore) opCtx() (context.Context, context.CancelFunc) {
+func (s *Store) opCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
-func (s *RedisStore) Add(reqLog *model.RequestLog) error {
+func (s *Store) Add(reqLog *store.RequestLog) error {
 	data, err := json.Marshal(reqLog)
 	if err != nil {
 		return fmt.Errorf("redis marshal: %w", err)
@@ -86,7 +90,7 @@ func (s *RedisStore) Add(reqLog *model.RequestLog) error {
 	return nil
 }
 
-func (s *RedisStore) cleanup() {
+func (s *Store) cleanup() {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
@@ -116,7 +120,7 @@ func (s *RedisStore) cleanup() {
 	}
 }
 
-func (s *RedisStore) Get(id string) (*model.RequestLog, bool) {
+func (s *Store) Get(id string) (*store.RequestLog, bool) {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
@@ -129,7 +133,7 @@ func (s *RedisStore) Get(id string) (*model.RequestLog, bool) {
 		return nil, false
 	}
 
-	var reqLog model.RequestLog
+	var reqLog store.RequestLog
 	if err := json.Unmarshal(data, &reqLog); err != nil {
 		log.Printf("govisual: failed to unmarshal Redis log: %v", err)
 		return nil, false
@@ -137,7 +141,7 @@ func (s *RedisStore) Get(id string) (*model.RequestLog, bool) {
 	return &reqLog, true
 }
 
-func (s *RedisStore) GetAll() []*model.RequestLog {
+func (s *Store) GetAll() []*store.RequestLog {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
@@ -149,7 +153,7 @@ func (s *RedisStore) GetAll() []*model.RequestLog {
 	return s.getLogs(ctx, ids)
 }
 
-func (s *RedisStore) GetLatest(n int) []*model.RequestLog {
+func (s *Store) GetLatest(n int) []*store.RequestLog {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
@@ -161,7 +165,7 @@ func (s *RedisStore) GetLatest(n int) []*model.RequestLog {
 	return s.getLogs(ctx, ids)
 }
 
-func (s *RedisStore) getLogs(ctx context.Context, ids []string) []*model.RequestLog {
+func (s *Store) getLogs(ctx context.Context, ids []string) []*store.RequestLog {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -178,7 +182,7 @@ func (s *RedisStore) getLogs(ctx context.Context, ids []string) []*model.Request
 		return nil
 	}
 
-	logs := make([]*model.RequestLog, 0, len(ids))
+	logs := make([]*store.RequestLog, 0, len(ids))
 	var expired []interface{}
 	for i, cmd := range cmds {
 		data, err := cmd.Bytes()
@@ -192,7 +196,7 @@ func (s *RedisStore) getLogs(ctx context.Context, ids []string) []*model.Request
 			}
 			continue
 		}
-		var reqLog model.RequestLog
+		var reqLog store.RequestLog
 		if err := json.Unmarshal(data, &reqLog); err != nil {
 			log.Printf("govisual: failed to unmarshal Redis log %s: %v", ids[i], err)
 			continue
@@ -208,7 +212,7 @@ func (s *RedisStore) getLogs(ctx context.Context, ids []string) []*model.Request
 	return logs
 }
 
-func (s *RedisStore) Clear() error {
+func (s *Store) Clear() error {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
@@ -238,6 +242,6 @@ func (s *RedisStore) Clear() error {
 	return nil
 }
 
-func (s *RedisStore) Close() error {
+func (s *Store) Close() error {
 	return s.client.Close()
 }

@@ -6,9 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/doganarif/govisual/internal/model"
-	"github.com/doganarif/govisual/internal/profiling"
-	"github.com/doganarif/govisual/internal/store"
+	"github.com/doganarif/govisual/v2/internal/profiling"
+	"github.com/doganarif/govisual/v2/store"
 )
 
 // ProfilingConfig contains configuration for profiling middleware
@@ -20,19 +19,19 @@ type ProfilingConfig struct {
 }
 
 // WrapWithProfiling wraps an http.Handler with request visualization and performance profiling.
-func WrapWithProfiling(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler) http.Handler {
-	return WrapWithProfilingAndLimits(handler, store, logRequestBody, logResponseBody, pathMatcher, profiler, DefaultMaxBodyBytes)
+func WrapWithProfiling(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler) http.Handler {
+	return WrapWithProfilingAndLimits(handler, st, logRequestBody, logResponseBody, pathMatcher, profiler, DefaultMaxBodyBytes)
 }
 
 // WrapWithProfilingAndLimits is identical to WrapWithProfiling but exposes the captured-body size cap.
-func WrapWithProfilingAndLimits(handler http.Handler, store store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int) http.Handler {
+func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
 			handler.ServeHTTP(w, r)
 			return
 		}
 
-		reqLog := model.NewRequestLog(r)
+		reqLog := store.NewRequestLog(r)
 
 		tracer := NewRequestTracer(reqLog.ID)
 		tracer.StartTrace("Request Handler", "handler", map[string]interface{}{
@@ -76,7 +75,7 @@ func WrapWithProfilingAndLimits(handler http.Handler, store store.Store, logRequ
 
 		if profiler != nil {
 			if metrics := profiler.EndProfiling(ctx); metrics != nil {
-				reqLog.PerformanceMetrics = metrics
+				reqLog.PerformanceMetrics = metrics.Model()
 			}
 		}
 
@@ -115,7 +114,7 @@ func WrapWithProfilingAndLimits(handler http.Handler, store store.Store, logRequ
 			reqLog.ResponseBody = resWriter.body()
 		}
 
-		_ = store.Add(reqLog)
+		_ = st.Add(reqLog)
 	})
 }
 

@@ -1,4 +1,4 @@
-package store
+package sqlite
 
 import (
 	"fmt"
@@ -7,7 +7,8 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/doganarif/govisual/internal/model"
+	"github.com/doganarif/govisual/v2/store"
+	"github.com/doganarif/govisual/v2/store/storetest"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -18,12 +19,12 @@ func TestSQLiteStore(t *testing.T) {
 	}
 	defer db.Close()
 
-	store, err := NewSQLiteStoreWithDB(db, "logs", 10)
+	s, err := NewWithDB(db, "logs", 10)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}
 
-	runStoreTests(t, store)
+	storetest.Run(t, s)
 }
 
 func TestSQLiteStoreCleanupKeepsNewest(t *testing.T) {
@@ -33,14 +34,14 @@ func TestSQLiteStoreCleanupKeepsNewest(t *testing.T) {
 	}
 	defer db.Close()
 
-	store, err := NewSQLiteStoreWithDB(db, "logs", 10)
+	s, err := NewWithDB(db, "logs", 10)
 	if err != nil {
 		t.Fatalf("failed to create SQLite store: %v", err)
 	}
 
 	base := time.Now()
 	for i := 0; i < 25; i++ {
-		store.Add(&model.RequestLog{
+		s.Add(&store.RequestLog{
 			ID:        fmt.Sprintf("req-%02d", i),
 			Timestamp: base.Add(time.Duration(i) * time.Second),
 			Method:    "GET",
@@ -48,9 +49,9 @@ func TestSQLiteStoreCleanupKeepsNewest(t *testing.T) {
 		})
 	}
 
-	store.cleanup()
+	s.cleanup()
 
-	all := store.GetAll()
+	all := s.GetAll()
 	if len(all) != 10 {
 		t.Fatalf("expected capacity 10 after cleanup, got %d", len(all))
 	}

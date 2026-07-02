@@ -8,7 +8,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/doganarif/govisual"
+	"github.com/doganarif/govisual/store/mongodb"
+	"github.com/doganarif/govisual/store/postgres"
+	redisstore "github.com/doganarif/govisual/store/redis"
+	sqlitestore "github.com/doganarif/govisual/store/sqlite"
+	"github.com/doganarif/govisual/v2"
 	_ "github.com/mattn/go-sqlite3" // Import your preferred SQLite driver
 )
 
@@ -36,7 +40,11 @@ func main() {
 		if tableName == "" {
 			tableName = "govisual_requests"
 		}
-		opts = append(opts, govisual.WithPostgresStorage(connStr, tableName))
+		st, err := postgres.New(connStr, tableName, 100)
+		if err != nil {
+			log.Fatalf("Failed to create PostgreSQL store: %v", err)
+		}
+		opts = append(opts, govisual.WithStore(st))
 		log.Printf("Using PostgreSQL storage with table: %s", tableName)
 
 	case "redis":
@@ -53,7 +61,11 @@ func main() {
 				ttl = 86400
 			}
 		}
-		opts = append(opts, govisual.WithRedisStorage(connStr, ttl))
+		st, err := redisstore.New(connStr, 100, ttl)
+		if err != nil {
+			log.Fatalf("Failed to create Redis store: %v", err)
+		}
+		opts = append(opts, govisual.WithStore(st))
 		log.Printf("Using Redis storage with TTL: %d seconds", ttl)
 
 	case "sqlite":
@@ -67,7 +79,11 @@ func main() {
 			tableName = "govisual_requests"
 		}
 
-		opts = append(opts, govisual.WithSQLiteStorage(connStr, tableName))
+		st, err := sqlitestore.New(connStr, tableName, 100)
+		if err != nil {
+			log.Fatalf("Failed to create SQLite store: %v", err)
+		}
+		opts = append(opts, govisual.WithStore(st))
 		log.Printf("Using SQLite storage with table: %s", tableName)
 
 	case "sqlite_with_db":
@@ -98,16 +114,22 @@ func main() {
 		}
 
 		// Pass the existing connection to govisual
-		opts = append(opts, govisual.WithSQLiteStorageDB(db, tableName))
+		st, err := sqlitestore.NewWithDB(db, tableName, 100)
+		if err != nil {
+			log.Fatalf("Failed to create SQLite store: %v", err)
+		}
+		opts = append(opts, govisual.WithStore(st))
 		log.Printf("Using SQLite storage with existing connection and table: %s", tableName)
 	case "mongodb":
 		uri := os.Getenv("GOVISUAL_MONGO_URI")
 		database := os.Getenv("GOVISUAL_MONGO_DATABASE")
 		collection := os.Getenv("GOVISUAL_MONGO_COLLECTION")
-		opts = append(opts, govisual.WithMongoDBStorage(uri, database, collection))
+		st, err := mongodb.New(uri, database, collection, 100)
+		if err != nil {
+			log.Fatalf("Failed to create MongoDB store: %v", err)
+		}
+		opts = append(opts, govisual.WithStore(st))
 	default:
-		// Default to memory storage
-		opts = append(opts, govisual.WithMemoryStorage())
 		log.Println("Using in-memory storage (default)")
 	}
 
