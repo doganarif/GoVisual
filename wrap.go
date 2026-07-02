@@ -25,10 +25,12 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 		opt(config)
 	}
 
-	requestStore := config.Store
+	var requestStore store.Store = config.Store
 	if requestStore == nil {
 		requestStore = store.NewMemory(config.MaxRequests)
 	}
+	// Notification lets the dashboard push live updates instead of polling.
+	requestStore = store.WithNotify(requestStore)
 
 	var profiler *profiling.Profiler
 	if config.EnableProfiling {
