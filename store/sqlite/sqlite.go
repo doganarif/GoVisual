@@ -106,7 +106,9 @@ func (s *Store) createTable() error {
 			id TEXT PRIMARY KEY,
 			timestamp DATETIME,
 			method TEXT,
+			host TEXT,
 			path TEXT,
+			raw_path TEXT,
 			query TEXT,
 			request_headers TEXT,
 			response_headers TEXT,
@@ -126,17 +128,64 @@ func (s *Store) createTable() error {
 		return err
 	}
 
-	// Best-effort ALTER for pre-v2 tables. SQLite reports "duplicate column
-	// name" if the column already exists; ignore that and keep going.
-	alter := fmt.Sprintf("ALTER TABLE %s ADD COLUMN extras TEXT", s.tableName)
-	if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		log.Printf("govisual: ALTER TABLE for extras column failed: %v", err)
+	for _, column := range []string{"extras", "host", "raw_path"} {
+		if err := s.ensureTextColumn(column); err != nil {
+			return err
+		}
 	}
 
 	indexQuery := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_timestamp_idx ON %s(timestamp DESC)",
 		s.tableName, s.tableName)
 	_, err := s.db.Exec(indexQuery)
 	return err
+}
+
+// ensureTextColumn upgrades an existing table without relying on an ALTER
+// error to determine whether the column already exists. The duplicate-column
+// check only handles the race where another process migrates after the PRAGMA.
+func (s *Store) ensureTextColumn(column string) error {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", s.tableName))
+	if err != nil {
+		return fmt.Errorf("inspect schema for %s: %w", column, err)
+	}
+
+	found := false
+	for rows.Next() {
+		var (
+			cid          int
+			name         string
+			columnType   string
+			notNull      int
+			defaultValue interface{}
+			primaryKey   int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("inspect schema for %s: %w", column, err)
+		}
+		if strings.EqualFold(name, column) {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("inspect schema for %s: %w", column, err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("inspect schema for %s: %w", column, err)
+	}
+	if found {
+		return nil
+	}
+
+	alter := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT", s.tableName, column)
+	if _, err := s.db.Exec(alter); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			return nil
+		}
+		return fmt.Errorf("add %s column: %w", column, err)
+	}
+	return nil
 }
 
 // extrasPayload holds the capture fields introduced in v2 that don't have
@@ -147,21 +196,20 @@ type extrasPayload struct {
 	PerformanceMetrics *store.PerformanceMetrics `json:"performance_metrics,omitempty"`
 }
 
-func encodeExtras(l *store.RequestLog) string {
+func encodeExtras(l *store.RequestLog) (string, error) {
 	p := extrasPayload{
 		Logs:               l.Logs,
 		PanicStack:         l.PanicStack,
 		PerformanceMetrics: l.PerformanceMetrics,
 	}
 	if len(p.Logs) == 0 && p.PanicStack == "" && p.PerformanceMetrics == nil {
-		return ""
+		return "", nil
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		log.Printf("govisual: marshaling extras: %v", err)
-		return ""
+		return "", fmt.Errorf("marshal extras: %w", err)
 	}
-	return string(data)
+	return string(data), nil
 }
 
 func decodeExtras(s string, l *store.RequestLog) {
@@ -179,37 +227,54 @@ func decodeExtras(s string, l *store.RequestLog) {
 }
 
 func (s *Store) Add(reqLog *store.RequestLog) error {
-	reqHeaders := prepareJSON(reqLog.RequestHeaders)
-	respHeaders := prepareJSON(reqLog.ResponseHeaders)
+	reqHeaders, err := prepareJSON(reqLog.RequestHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal request headers: %w", err)
+	}
+	respHeaders, err := prepareJSON(reqLog.ResponseHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal response headers: %w", err)
+	}
 
 	middlewareTrace := "[]"
 	if len(reqLog.MiddlewareTrace) > 0 {
-		if data, err := json.Marshal(reqLog.MiddlewareTrace); err == nil {
-			middlewareTrace = string(data)
+		data, err := json.Marshal(reqLog.MiddlewareTrace)
+		if err != nil {
+			return fmt.Errorf("marshal middleware trace: %w", err)
 		}
+		middlewareTrace = string(data)
 	}
 
 	routeTrace := "{}"
 	if reqLog.RouteTrace != nil {
-		if data, err := json.Marshal(reqLog.RouteTrace); err == nil {
-			routeTrace = string(data)
+		data, err := json.Marshal(reqLog.RouteTrace)
+		if err != nil {
+			return fmt.Errorf("marshal route trace: %w", err)
 		}
+		routeTrace = string(data)
+	}
+
+	extras, err := encodeExtras(reqLog)
+	if err != nil {
+		return err
 	}
 
 	query := fmt.Sprintf(`
 		INSERT OR REPLACE INTO %s (
-			id, timestamp, method, path, query, request_headers, response_headers,
+			id, timestamp, method, host, path, raw_path, query, request_headers, response_headers,
 			status_code, duration, request_body, response_body, error,
 			middleware_trace, route_trace, extras
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, s.tableName)
 
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		query,
 		reqLog.ID,
 		reqLog.Timestamp,
 		reqLog.Method,
+		reqLog.Host,
 		reqLog.Path,
+		reqLog.RawPath,
 		reqLog.Query,
 		reqHeaders,
 		respHeaders,
@@ -220,39 +285,42 @@ func (s *Store) Add(reqLog *store.RequestLog) error {
 		reqLog.Error,
 		middlewareTrace,
 		routeTrace,
-		encodeExtras(reqLog),
+		extras,
 	)
 	if err != nil {
 		return fmt.Errorf("sqlite insert: %w", err)
 	}
 
 	if s.insertCount.Add(1)%cleanupEveryN == 0 {
-		s.cleanup()
+		if err := s.cleanup(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (s *Store) cleanup() {
+func (s *Store) cleanup() error {
 	// One statement that keeps the newest rows; a separate COUNT would go
 	// stale under concurrent inserts and leave the table above capacity.
 	deleteQuery := fmt.Sprintf(`
 		DELETE FROM %s
 		WHERE id NOT IN (
 			SELECT id FROM %s
-			ORDER BY created_at DESC, timestamp DESC
+			ORDER BY timestamp DESC, rowid DESC
 			LIMIT ?
 		)
 	`, s.tableName, s.tableName)
 
 	if _, err := s.db.Exec(deleteQuery, s.capacity); err != nil {
-		log.Printf("govisual: failed to clean up old logs: %v", err)
+		return fmt.Errorf("sqlite cleanup: %w", err)
 	}
+	return nil
 }
 
 func (s *Store) Get(id string) (*store.RequestLog, bool) {
 	query := fmt.Sprintf(`
 		SELECT
-			id, timestamp, method, path, query,
+			id, timestamp, method, COALESCE(host, ''), path, COALESCE(raw_path, ''), query,
 			COALESCE(request_headers, '{}'),
 			COALESCE(response_headers, '{}'),
 			status_code, duration, request_body, response_body, error,
@@ -276,7 +344,9 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 		&reqLog.ID,
 		&reqLog.Timestamp,
 		&reqLog.Method,
+		&reqLog.Host,
 		&reqLog.Path,
+		&reqLog.RawPath,
 		&reqLog.Query,
 		&reqHeadersStr,
 		&respHeadersStr,
@@ -309,7 +379,7 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 func (s *Store) GetAll() []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
-			id, timestamp, method, path, query,
+			id, timestamp, method, COALESCE(host, ''), path, COALESCE(raw_path, ''), query,
 			COALESCE(request_headers, '{}'),
 			COALESCE(response_headers, '{}'),
 			status_code, duration, request_body, response_body, error,
@@ -326,7 +396,7 @@ func (s *Store) GetAll() []*store.RequestLog {
 func (s *Store) GetLatest(n int) []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
-			id, timestamp, method, path, query,
+			id, timestamp, method, COALESCE(host, ''), path, COALESCE(raw_path, ''), query,
 			COALESCE(request_headers, '{}'),
 			COALESCE(response_headers, '{}'),
 			status_code, duration, request_body, response_body, error,
@@ -363,7 +433,9 @@ func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog
 			&reqLog.ID,
 			&reqLog.Timestamp,
 			&reqLog.Method,
+			&reqLog.Host,
 			&reqLog.Path,
+			&reqLog.RawPath,
 			&reqLog.Query,
 			&reqHeadersStr,
 			&respHeadersStr,
@@ -412,16 +484,15 @@ func (s *Store) Close() error {
 }
 
 // prepareJSON ensures we have a valid JSON string
-func prepareJSON(v interface{}) string {
+func prepareJSON(v interface{}) (string, error) {
 	if v == nil {
-		return "{}"
+		return "{}", nil
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
-		log.Printf("govisual: failed to marshal JSON: %v", err)
-		return "{}"
+		return "", err
 	}
-	return string(data)
+	return string(data), nil
 }
 
 func unmarshalLogJSON(s string, v interface{}, field, logID string) {

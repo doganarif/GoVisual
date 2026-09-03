@@ -71,6 +71,12 @@ func TestMemoryTotalAllocSurvivesGC(t *testing.T) {
 	if metrics.MemoryTotalAlloc > 1<<40 {
 		t.Fatalf("MemoryTotalAlloc = %d, uint64 underflow", metrics.MemoryTotalAlloc)
 	}
+	if metrics.NumGC == 0 {
+		t.Fatal("NumGC should report collections during the request, got 0")
+	}
+	if metrics.GCPauseTotal <= 0 {
+		t.Fatalf("GCPauseTotal should report pause time during the request, got %s", metrics.GCPauseTotal)
+	}
 	for _, b := range metrics.Bottlenecks {
 		if b.Type == "memory" {
 			t.Fatalf("unexpected memory bottleneck: %+v", b)

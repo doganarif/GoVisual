@@ -1,4 +1,4 @@
-import { h } from "preact";
+import { h, type TargetedEvent } from "preact";
 import { useState } from "preact/hooks";
 import { api, ApiError, RequestLog, ReplayResponse } from "../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -13,9 +13,12 @@ interface RequestReplayProps {
   onClose: () => void;
 }
 
+const REDACTED_HEADER_VALUE = "[redacted by govisual]";
+const TRUNCATION_MARKER = "...[truncated by govisual]";
+
 export function RequestReplay({ request, onClose }: RequestReplayProps) {
-  const [replayUrl, setReplayUrl] = useState(
-    request.Path + (request.Query ? `?${request.Query}` : "")
+  const [replayPath, setReplayPath] = useState(
+    (request.RawPath || request.Path) + (request.Query ? `?${request.Query}` : "")
   );
   const [replayMethod, setReplayMethod] = useState(request.Method);
   const [replayHeaders, setReplayHeaders] = useState<Record<string, string>>(
@@ -23,7 +26,8 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
       const headers: Record<string, string> = {};
       if (request.RequestHeaders) {
         Object.entries(request.RequestHeaders).forEach(([key, values]) => {
-          headers[key] = Array.isArray(values) ? values[0] : values;
+          const value = Array.isArray(values) ? values[0] : values;
+          if (value !== REDACTED_HEADER_VALUE) headers[key] = value;
         });
       }
       return headers;
@@ -35,30 +39,32 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
     null
   );
   const [replayError, setReplayError] = useState<string | null>(null);
+  const replayPathInvalid =
+    !replayPath.startsWith("/") || replayPath.startsWith("//");
+  const replayBodyStillTruncated =
+    request.RequestBody?.endsWith(TRUNCATION_MARKER) &&
+    replayBody === request.RequestBody;
 
   const handleReplay = async () => {
     try {
       setIsReplaying(true);
       setReplayError(null);
 
-      // Build full URL if needed
-      let fullUrl = replayUrl;
-      if (!fullUrl.startsWith("http")) {
-        // Try to extract host from original request headers
-        const hostHeader = request.RequestHeaders?.["Host"];
-        const host = hostHeader
-          ? Array.isArray(hostHeader)
-            ? hostHeader[0]
-            : hostHeader
-          : "localhost";
-        const protocol = "http://"; // Default to http, could be made configurable
-        fullUrl = protocol + host + fullUrl;
+      if (replayPathInvalid) {
+        setReplayError("Replay path must start with a single '/'.");
+        return;
+      }
+      if (replayBodyStillTruncated) {
+        setReplayError(
+          "The captured request body is truncated. Replace it with the complete body before replaying."
+        );
+        return;
       }
 
       const response = await api.replayRequest({
         requestId: request.ID,
-        url: fullUrl,
         method: replayMethod,
+        path: replayPath,
         headers: replayHeaders,
         body: replayBody,
       });
@@ -66,7 +72,7 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
       setReplayResponse(response);
     } catch (error) {
       if (error instanceof ApiError) {
-        if (error.isNotFound) {
+        if (error.isNotFound && error.body.includes("replay disabled")) {
           setReplayError(
             "Replay is disabled on the server. Enable it with " +
               "govisual.WithReplayEnabled(true)."
@@ -137,6 +143,12 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
           <CardTitle>Request Configuration</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            The server sends this to its configured replay base or the
+            dashboard origin. You can change the method, path, headers, and
+            body, but not the destination host.
+            {request.Host ? ` Captured host: ${request.Host}.` : ""}
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="text-sm font-medium mb-1 block">Method</label>
@@ -158,13 +170,18 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
             </div>
 
             <div>
-              <label className="text-sm font-medium mb-1 block">URL</label>
+              <label htmlFor="replay-path" className="text-sm font-medium mb-1 block">
+                Path
+              </label>
               <Input
-                value={replayUrl}
-                onChange={(e) =>
-                  setReplayUrl((e.target as HTMLInputElement).value)
+                id="replay-path"
+                value={replayPath}
+                onChange={(e: TargetedEvent<HTMLInputElement>) =>
+                  setReplayPath(e.currentTarget.value)
                 }
-                placeholder="Enter URL"
+                placeholder="/path?query=value"
+                aria-invalid={replayPathInvalid}
+                aria-describedby={replayError ? "replay-error" : undefined}
               />
             </div>
           </div>
@@ -186,10 +203,10 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
                   />
                   <Input
                     value={value}
-                    onChange={(e) =>
+                    onChange={(e: TargetedEvent<HTMLInputElement>) =>
                       handleHeaderChange(
                         key,
-                        (e.target as HTMLInputElement).value
+                        e.currentTarget.value
                       )
                     }
                     placeholder="Value"
@@ -208,24 +225,20 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
             </div>
           </div>
 
-          {(replayMethod === "POST" ||
-            replayMethod === "PUT" ||
-            replayMethod === "PATCH") && (
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Request Body
-              </label>
-              <textarea
-                value={replayBody}
-                onChange={(e) =>
-                  setReplayBody((e.target as HTMLTextAreaElement).value)
-                }
-                className="w-full p-2 border rounded-md font-mono text-sm"
-                rows={6}
-                placeholder="Enter request body (JSON, XML, etc.)"
-              />
-            </div>
-          )}
+          <div>
+            <label className="text-sm font-medium mb-1 block">
+              Request Body
+            </label>
+            <textarea
+              value={replayBody}
+              onChange={(e: TargetedEvent<HTMLTextAreaElement>) =>
+                setReplayBody(e.currentTarget.value)
+              }
+              className="w-full p-2 border rounded-md font-mono text-sm"
+              rows={6}
+              placeholder="Enter request body (JSON, XML, etc.)"
+            />
+          </div>
 
           <div className="flex justify-end gap-2">
             <Button onClick={onClose} variant="outline">
@@ -243,12 +256,12 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
       </Card>
 
       {replayError && (
-        <Card className="border-red-200 bg-red-50">
+        <Card className="border-red-200 bg-red-50" role="alert" aria-live="assertive">
           <CardHeader>
             <CardTitle className="text-red-800">Error</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-red-700">{replayError}</p>
+            <p id="replay-error" className="text-red-700">{replayError}</p>
           </CardContent>
         </Card>
       )}
@@ -318,6 +331,11 @@ export function RequestReplay({ request, onClose }: RequestReplayProps) {
 
               <TabsContent value="body">
                 <div className="bg-gray-50 dark:bg-gray-900 rounded p-4">
+                  {replayResponse.bodyTruncated && (
+                    <p className="mb-3 text-sm text-amber-700" role="status">
+                      Response body is truncated at 1 MiB.
+                    </p>
+                  )}
                   <pre className="text-sm font-mono overflow-x-auto max-h-96 overflow-y-auto">
                     {replayResponse.body}
                   </pre>

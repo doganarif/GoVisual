@@ -56,22 +56,56 @@ jobs:
         with:
           go-version: '1.24'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: internal/dashboard/ui/package-lock.json
+
+      - name: Install dashboard dependencies
+        working-directory: internal/dashboard/ui
+        run: npm ci
+
+      - name: Type-check dashboard
+        working-directory: internal/dashboard/ui
+        run: npm run typecheck
+
+      - name: Build dashboard
+        working-directory: internal/dashboard/ui
+        run: npm run build
+
+      - name: Verify committed dashboard assets
+        run: git diff --exit-code -- internal/dashboard/static/dashboard.js internal/dashboard/static/styles.css
+
       - name: Install SQLite driver (CGO)
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - name: Test core module
+        env:
+          GOTOOLCHAIN: local
         run: go test -v ./...
 
-      - name: Test submodules
+      - name: Test Go 1.24 submodules
         env:
+          GOTOOLCHAIN: local
           PG_CONN: postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable
           REDIS_CONN: redis://localhost:6379/0
           MONGO_URI: mongodb://root:root@localhost:27017
         run: |
-          for m in store/postgres store/redis store/mongodb store/sqlite telemetry mcp; do
+          for m in store/postgres store/redis store/mongodb store/sqlite mcp; do
             echo "== $m"
             (cd "$m" && go test -v ./...)
           done
 
-      - name: Build examples
-        run: cd cmd/examples && go build ./...
+      - name: Set up Go 1.25
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Test Go 1.25 modules and build examples
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          (cd telemetry && go test -v ./...)
+          (cd cmd/examples && go build ./...)

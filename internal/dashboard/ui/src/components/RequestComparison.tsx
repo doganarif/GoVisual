@@ -3,7 +3,6 @@ import { useState, useEffect } from "preact/hooks";
 import { api, RequestLog } from "../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { cn } from "../lib/utils";
 
@@ -22,25 +21,22 @@ export function RequestComparison({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadComparisonData();
-  }, [requestIds]);
+    const controller = new AbortController();
+    setLoading(true);
+    api
+      .compareRequests(requestIds, controller.signal)
+      .then((data) => setCompareRequests(orderByIds(requestIds, data)))
+      .catch((error) => {
+        if (error?.name === "AbortError") return;
+        console.error("Failed to load comparison data:", error);
+        setCompareRequests(orderByIds(requestIds, allRequests));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
 
-  const loadComparisonData = async () => {
-    try {
-      setLoading(true);
-      const data = await api.compareRequests(requestIds);
-      setCompareRequests(data);
-    } catch (error) {
-      console.error("Failed to load comparison data:", error);
-      // Fallback to local data
-      const localData = allRequests.filter((req) =>
-        requestIds.includes(req.ID)
-      );
-      setCompareRequests(localData);
-    } finally {
-      setLoading(false);
-    }
-  };
+    return () => controller.abort();
+  }, [requestIds]);
 
   if (loading) {
     return (
@@ -78,10 +74,12 @@ export function RequestComparison({
     return "text-gray-600";
   };
 
-  const renderComparisonRow = (label: string, values: any[]) => {
-    const allSame = values.every(
-      (v) => JSON.stringify(v) === JSON.stringify(values[0])
-    );
+  const renderComparisonRow = (
+    label: string,
+    values: Array<string | number>,
+    valueClass?: (value: string | number) => string
+  ) => {
+    const allSame = values.every((value) => value === values[0]);
 
     return (
       <tr>
@@ -91,10 +89,11 @@ export function RequestComparison({
             key={idx}
             className={cn(
               "text-sm p-2 border-b",
-              !allSame && "bg-yellow-50 dark:bg-yellow-900/10"
+              !allSame && "bg-yellow-50 dark:bg-yellow-900/10",
+              valueClass?.(value)
             )}
           >
-            {typeof value === "object" ? JSON.stringify(value, null, 2) : value}
+            {value}
           </td>
         ))}
       </tr>
@@ -130,7 +129,7 @@ export function RequestComparison({
                     <tr>
                       <th className="text-left p-2 border-b">Property</th>
                       {compareRequests.map((req, idx) => (
-                        <th key={idx} className="text-left p-2 border-b">
+                        <th key={req.ID} className="text-left p-2 border-b">
                           Request {idx + 1}
                         </th>
                       ))}
@@ -151,11 +150,8 @@ export function RequestComparison({
                     )}
                     {renderComparisonRow(
                       "Status",
-                      compareRequests.map((r) => (
-                        <span className={getStatusColor(r.StatusCode)}>
-                          {r.StatusCode}
-                        </span>
-                      ))
+                      compareRequests.map((r) => r.StatusCode),
+                      (value) => getStatusColor(Number(value))
                     )}
                     {renderComparisonRow(
                       "Duration",
@@ -181,7 +177,7 @@ export function RequestComparison({
               <CardContent>
                 <div className="space-y-4">
                   {compareRequests.map((req, idx) => (
-                    <div key={idx}>
+                    <div key={req.ID}>
                       <h4 className="font-medium mb-2">Request {idx + 1}</h4>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-xs font-mono">
                         {Object.entries(req.RequestHeaders || {}).map(
@@ -208,7 +204,7 @@ export function RequestComparison({
               <CardContent>
                 <div className="space-y-4">
                   {compareRequests.map((req, idx) => (
-                    <div key={idx}>
+                    <div key={req.ID}>
                       <h4 className="font-medium mb-2">Request {idx + 1}</h4>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded p-2 text-xs font-mono">
                         {Object.entries(req.ResponseHeaders || {}).map(
@@ -239,7 +235,7 @@ export function RequestComparison({
               <CardContent>
                 <div className="space-y-4">
                   {compareRequests.map((req, idx) => (
-                    <div key={idx}>
+                    <div key={req.ID}>
                       <h4 className="font-medium mb-2">Request {idx + 1}</h4>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded p-2">
                         <pre className="text-xs overflow-x-auto">
@@ -259,7 +255,7 @@ export function RequestComparison({
               <CardContent>
                 <div className="space-y-4">
                   {compareRequests.map((req, idx) => (
-                    <div key={idx}>
+                    <div key={req.ID}>
                       <h4 className="font-medium mb-2">Request {idx + 1}</h4>
                       <div className="bg-gray-50 dark:bg-gray-900 rounded p-2">
                         <pre className="text-xs overflow-x-auto max-h-48 overflow-y-auto">
@@ -287,7 +283,7 @@ export function RequestComparison({
                       <tr>
                         <th className="text-left p-2 border-b">Metric</th>
                         {compareRequests.map((req, idx) => (
-                          <th key={idx} className="text-left p-2 border-b">
+                          <th key={req.ID} className="text-left p-2 border-b">
                             Request {idx + 1}
                           </th>
                         ))}
@@ -295,42 +291,46 @@ export function RequestComparison({
                     </thead>
                     <tbody>
                       {renderComparisonRow(
-                        "CPU Time",
+                        "Profile window",
                         compareRequests.map((r) =>
                           r.PerformanceMetrics
-                            ? `${r.PerformanceMetrics.cpu_time}ms`
+                            ? formatNanoseconds(r.PerformanceMetrics.duration)
                             : "N/A"
                         )
                       )}
                       {renderComparisonRow(
-                        "Memory Allocated",
+                        "Allocated during window",
                         compareRequests.map((r) =>
                           r.PerformanceMetrics
-                            ? `${(
-                                r.PerformanceMetrics.memory_alloc /
-                                1024 /
-                                1024
-                              ).toFixed(2)}MB`
+                            ? formatBytes(r.PerformanceMetrics.memory_total_alloc)
                             : "N/A"
                         )
                       )}
                       {renderComparisonRow(
-                        "Goroutines",
-                        compareRequests.map(
-                          (r) => r.PerformanceMetrics?.num_goroutines || "N/A"
-                        )
-                      )}
-                      {renderComparisonRow(
-                        "GC Runs",
-                        compareRequests.map(
-                          (r) => r.PerformanceMetrics?.num_gc || "N/A"
-                        )
-                      )}
-                      {renderComparisonRow(
-                        "GC Pause",
+                        "Process heap",
                         compareRequests.map((r) =>
                           r.PerformanceMetrics
-                            ? `${r.PerformanceMetrics.gc_pause_total}ms`
+                            ? formatBytes(r.PerformanceMetrics.memory_alloc)
+                            : "N/A"
+                        )
+                      )}
+                      {renderComparisonRow(
+                        "Process goroutines",
+                        compareRequests.map(
+                          (r) => r.PerformanceMetrics?.num_goroutines ?? "N/A"
+                        )
+                      )}
+                      {renderComparisonRow(
+                        "GC runs",
+                        compareRequests.map(
+                          (r) => r.PerformanceMetrics?.num_gc ?? "N/A"
+                        )
+                      )}
+                      {renderComparisonRow(
+                        "GC pause",
+                        compareRequests.map((r) =>
+                          r.PerformanceMetrics
+                            ? formatNanoseconds(r.PerformanceMetrics.gc_pause_total)
                             : "N/A"
                         )
                       )}
@@ -348,4 +348,30 @@ export function RequestComparison({
       </Tabs>
     </div>
   );
+}
+
+function orderByIds(ids: string[], requests: RequestLog[]): RequestLog[] {
+  const byId = new Map(requests.map((request) => [request.ID, request]));
+  return ids.flatMap((id) => {
+    const request = byId.get(id);
+    return request ? [request] : [];
+  });
+}
+
+function formatNanoseconds(ns: number): string {
+  if (!ns) return "0ms";
+  const ms = ns / 1_000_000;
+  if (ms < 1) return `${Math.round(ns / 1_000)}μs`;
+  if (ms < 1_000) return `${ms.toFixed(2)}ms`;
+  return `${(ms / 1_000).toFixed(2)}s`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const unit = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1
+  );
+  return `${(bytes / 1024 ** unit).toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
 }

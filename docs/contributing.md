@@ -1,127 +1,97 @@
 # Contributing to GoVisual
 
-Thank you for your interest in contributing to GoVisual! This document provides guidelines and instructions for contributing to the project.
+Thanks for helping improve GoVisual. Keep changes focused, add tests for behavior changes, and update generated dashboard assets when the UI changes.
 
-## Development Setup
+## Prerequisites
 
-### Prerequisites
+- Go 1.24 for the core, MCP, and storage modules; Go 1.25 for telemetry and examples (or Go 1.25 for the full repository)
+- Node.js 22 and npm for dashboard work
+- Docker for PostgreSQL, Redis, MongoDB, and integration examples
+- CGO and SQLite development headers for the SQLite module
 
-- Go 1.20 or higher
-- Docker and Docker Compose (for running the examples with databases)
-- Git
+## Set up a checkout
 
-### Getting Started
+```bash
+git clone https://github.com/YOUR_GITHUB_USER/GoVisual.git
+cd GoVisual
+git remote add upstream https://github.com/doganarif/GoVisual.git
+go mod download
+```
 
-1. Fork the repository on GitHub
-2. Clone your fork locally
-   ```bash
-   git clone https://github.com/yourusername/govisual.git
-   cd govisual
-   ```
-3. Add the original repository as an upstream remote
-   ```bash
-   git remote add upstream https://github.com/doganarif/govisual.git
-   ```
-4. Install dependencies
-   ```bash
-   go mod download
-   ```
+Use a short semantic branch name such as `fix/replay-validation`, `feat/request-filter`, or `docs/dashboard-guide`.
 
-## Running Tests
+## Run the tests
 
-Run the tests with:
+Test the core v2 module:
 
 ```bash
 go test ./...
 ```
 
-For tests involving storage backends, you can use the provided Docker Compose files:
+The storage backends, telemetry package, MCP server, and examples are separate Go modules. Run them from their module directories:
 
 ```bash
-# For PostgreSQL tests
-cd cmd/examples/multistorage
-GOVISUAL_STORAGE_TYPE=postgres \
-GOVISUAL_PG_CONN="postgres://postgres:postgres@localhost:5432/govisual?sslmode=disable" \
-go test ../../internal/store/...
-
-# For Redis tests
-GOVISUAL_STORAGE_TYPE=redis \
-GOVISUAL_REDIS_CONN="redis://localhost:6379/0" \
-go test ../../internal/store/...
+for module in store/postgres store/redis store/mongodb store/sqlite telemetry mcp cmd/examples; do
+	(cd "$module" && go test ./...)
+done
 ```
 
-## Code Style Guidelines
+PostgreSQL, Redis, and MongoDB tests need running services and the same connection variables used by CI:
 
-GoVisual follows standard Go coding conventions:
+```bash
+export PG_CONN='postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable'
+export REDIS_CONN='redis://localhost:6379/0'
+export MONGO_URI='mongodb://root:root@localhost:27017'
+```
 
-- Run `go fmt` before committing to ensure consistent formatting
-- Follow [Effective Go](https://golang.org/doc/effective_go) guidelines
-- Use `golint` and `go vet` to check for common issues
-- Write meaningful comments, especially for exported functions and types
-- Keep functions small and focused on a single responsibility
-- Use meaningful variable and function names that describe their purpose
+Build all examples with:
 
-## Contribution Workflow
+```bash
+(cd cmd/examples && go build ./...)
+```
 
-1. Create a new branch for your feature or bugfix
+Before opening a pull request, format changed Go files and run static checks:
 
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+```bash
+gofmt -w path/to/changed.go
+go vet ./...
+```
 
-2. Make your changes, following the code style guidelines
+## Dashboard development
 
-3. Add tests for your changes
+The dashboard source is in `internal/dashboard/ui`. Its production JavaScript and CSS are committed under `internal/dashboard/static` because the Go binary embeds them.
 
-4. Run tests to make sure everything works
+Install exactly the locked dependency set, type-check, and rebuild:
 
-   ```bash
-   go test ./...
-   ```
+```bash
+cd internal/dashboard/ui
+npm ci
+npm run typecheck
+npm run build
+```
 
-5. Commit your changes with a clear and descriptive commit message
+Commit `package-lock.json` whenever dependencies change. After any UI change, include the regenerated `internal/dashboard/static/dashboard.js` and `internal/dashboard/static/styles.css`. CI rebuilds both files and fails when the committed assets differ.
 
-   ```bash
-   git commit -m "Add support for new feature X"
-   ```
+For local watch mode:
 
-6. Push to your fork
+```bash
+npm run dev
+```
 
-   ```bash
-   git push origin feature/your-feature-name
-   ```
+## Adding a storage backend
 
-7. Create a Pull Request against the main repository
+1. Implement the `store.Store` interface from `store/store.go`.
+2. Put the backend in its own module under `store/<name>`.
+3. Reuse `store/storetest` for contract coverage.
+4. Test persistence, ordering, capacity, cleanup, and schema migration behavior.
+5. Document installation and configuration in [storage-backends.md](storage-backends.md).
 
-## Pull Request Guidelines
+## Pull requests
 
-- Provide a clear description of the problem you're solving
-- Update documentation if necessary
-- Add or update tests as appropriate
-- Keep PRs focused on a single issue/feature to make them easier to review
-- Make sure CI tests pass
+- Explain the user-visible problem and the chosen behavior.
+- Add focused regression tests.
+- Update documentation and generated assets where applicable.
+- Keep unrelated refactors out of the change.
+- Ensure the core module, affected submodules, dashboard checks, and example build pass.
 
-## Adding Storage Backends
-
-When adding a new storage backend:
-
-1. Implement the `Store` interface in `internal/store/store.go`
-2. Add relevant configuration options in `options.go`
-3. Update factory methods in `internal/store/factory.go`
-4. Add documentation in `docs/storage-backends.md`
-5. Create examples showing usage
-
-## Reporting Issues
-
-When reporting issues, please include:
-
-- A clear description of the problem
-- Steps to reproduce
-- Expected vs. actual behavior
-- Version of GoVisual you're using
-- Go version and OS
-- Any relevant logs or error messages
-
-## License
-
-By contributing to GoVisual, you agree that your contributions will be licensed under the project's MIT license.
+By contributing, you agree that your contribution is licensed under the project's MIT license.

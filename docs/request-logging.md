@@ -1,112 +1,140 @@
 # Request Logging
 
-GoVisual can capture and log HTTP requests and responses passing through your application. This document explains how request logging works and how to configure it.
+GoVisual v2 captures request metadata around the `http.Handler` you pass to `govisual.Wrap`. Metadata capture is on by default; request and response bodies are opt-in.
 
-## Basic Logging
+## Captured metadata
 
-By default, GoVisual logs basic request and response metadata:
+Each sampled request records:
 
-- HTTP method (GET, POST, PUT, etc.)
-- URL path
-- Query parameters
-- Status code
-- Response time
-- Timestamp
-- Request and response headers
+- ID and timestamp
+- method, host, path, and raw query
+- request and response headers
+- status code and duration in milliseconds
+- request-scoped logs and custom events
+- middleware and route trace data when supplied
+- profiling data when profiling is enabled and the request meets the configured threshold
+- an error and stack trace when the wrapped handler panics
 
-This basic information is always captured and does not require any special configuration.
+Panics are recorded and then re-raised, so recovery middleware and `net/http` keep their normal behavior.
 
-## Body Logging
+## Body logging and limits
 
-For more detailed logging, you can enable request and response body logging:
-
-```go
-handler := govisual.Wrap(
-    mux,
-    govisual.WithRequestBodyLogging(true),  // Log request bodies
-    govisual.WithResponseBodyLogging(true), // Log response bodies
-)
-```
-
-### Important Considerations
-
-When enabling body logging, keep in mind:
-
-1. **Performance Impact**: Logging bodies requires reading them completely into memory, which may impact performance for large payloads
-2. **Security Concerns**: Request and response bodies may contain sensitive information (passwords, tokens, PII)
-3. **Memory Usage**: Bodies are stored in memory by default, which can increase memory usage
-
-## Ignoring Paths
-
-To prevent logging of certain paths (like health checks or static assets), use the `WithIgnorePaths` option:
+Body capture is disabled by default:
 
 ```go
 handler := govisual.Wrap(
-    mux,
-    govisual.WithIgnorePaths(
-        "/health",      // Exact match
-        "/metrics",     // Exact match
-        "/static/*",    // Wildcard pattern
-        "/api/auth/*"   // Wildcard pattern
-    ),
+	mux,
+	govisual.WithRequestBodyLogging(true),
+	govisual.WithResponseBodyLogging(true),
 )
 ```
 
-The dashboard path (`/__viz` by default) is automatically ignored to prevent recursive logging.
+Captured request and response bodies are each limited to 1 MiB by default. Larger bodies are truncated in the stored copy; the application still receives or sends the request normally. Set an explicit cap when needed:
 
-## Storage Considerations
+```go
+handler := govisual.Wrap(
+	mux,
+	govisual.WithRequestBodyLogging(true),
+	govisual.WithResponseBodyLogging(true),
+	govisual.WithMaxBodyBytes(256<<10), // 256 KiB per captured body
+)
+```
 
-How requests are stored depends on your configured storage backend:
+A negative `WithMaxBodyBytes` value disables the cap and is not recommended. Body logging may retain passwords, tokens, personal data, or large payloads; enable it only where that tradeoff is acceptable.
 
-- **Memory Storage**: Logs are kept in memory and lost when the application restarts
-- **PostgreSQL Storage**: Logs are stored in a database table and persist across restarts
-- **Redis Storage**: Logs are stored with a configurable time-to-live (TTL)
+## Header redaction
 
-See [Storage Backends](storage-backends.md) for more details.
+Headers are captured, but these credential-bearing values are replaced with `[redacted by govisual]` before the request reaches any storage backend:
 
-## Custom Headers
+- `Authorization`
+- `Proxy-Authorization`
+- `Cookie`
+- `Set-Cookie`
+- `X-Api-Key`
+- `X-Auth-Token`
+- `X-Csrf-Token`
 
-All headers are logged by default. If some headers contain sensitive information, you should handle them at the application level before they reach GoVisual.
+Header names remain visible. Apply application-specific redaction before `govisual.Wrap` if your service uses other sensitive headers. Body values are not automatically redacted.
 
-## Request Log Format
+## Sampling and ignored paths
 
-Internally, GoVisual stores request logs with the following structure:
+Capture only a fraction of traffic with a rate from 0 to 1:
+
+```go
+handler := govisual.Wrap(mux, govisual.WithSampleRate(0.1)) // about 10%
+```
+
+Exclude noisy or sensitive paths:
+
+```go
+handler := govisual.Wrap(
+	mux,
+	govisual.WithIgnorePaths(
+		"/health",
+		"/metrics",
+		"/static/*",
+	),
+)
+```
+
+Patterns use Go's `filepath.Match`; a pattern ending in `/` also acts as a prefix. The dashboard path and its API are always ignored to prevent recursive logging. `/favicon.ico` is ignored by default.
+
+## Request-scoped logs and events
+
+Wrap a `slog.Handler`, then log with the incoming request context:
+
+```go
+logger := slog.New(govisual.SlogHandler(slog.NewJSONHandler(os.Stdout, nil)))
+logger.InfoContext(r.Context(), "cache lookup", "hit", true)
+```
+
+Add structured diagnostic events without a logger:
+
+```go
+govisual.Event(r.Context(), "cache miss", "key", key, "tier", "redis")
+```
+
+Both appear on the request's Logs tab. Records written without the request context still pass to the underlying `slog.Handler`, but GoVisual cannot associate them with a request.
+
+## Stored shape
+
+The core request record is `store.RequestLog`:
 
 ```go
 type RequestLog struct {
-    ID             string                 // Unique identifier
-    Timestamp      time.Time              // When the request was received
-    Method         string                 // HTTP method
-    Path           string                 // URL path
-    Query          string                 // Query parameters
-    RequestHeaders map[string][]string    // Request headers
-    ResponseHeaders map[string][]string   // Response headers
-    StatusCode     int                    // HTTP status code
-    Duration       time.Duration          // Response time
-    RequestBody    string                 // Request body (if enabled)
-    ResponseBody   string                 // Response body (if enabled)
-    Error          string                 // Error message (if any)
-    MiddlewareTrace []MiddlewareTraceEntry // Middleware execution trace
-    RouteTrace     []RouteTraceEntry      // Route matching trace
+	ID                 string
+	Timestamp          time.Time
+	Method             string
+	Host               string
+	Path               string
+	RawPath            string // optional encoded path, such as /users/a%2Fb
+	Query              string
+	RequestHeaders     http.Header
+	ResponseHeaders    http.Header
+	StatusCode         int
+	Duration           int64 // milliseconds
+	RequestBody        string
+	ResponseBody       string
+	Error              string
+	MiddlewareTrace    []map[string]interface{}
+	RouteTrace         map[string]interface{}
+	PerformanceMetrics *PerformanceMetrics
+	Logs               []LogEntry
+	PanicStack         string
 }
 ```
 
-## Example
+Durations inside `PerformanceMetrics`, SQL calls, outbound HTTP calls, and nested trace entries are Go `time.Duration` values and therefore encode as nanoseconds in JSON. `RequestLog.Duration`, replay-response duration, and the top-level `MiddlewareTrace` map duration encode as milliseconds; the latter remains in milliseconds for compatibility with persisted v2.0.0 records.
 
-A complete example of request logging configuration:
+## Storage behavior
 
-```go
-handler := govisual.Wrap(
-    mux,
-    govisual.WithRequestBodyLogging(true),
-    govisual.WithResponseBodyLogging(true),
-    govisual.WithIgnorePaths("/health", "/metrics", "/static/*"),
-    govisual.WithMaxRequests(1000),
-)
-```
+Without `WithStore`, records live in an in-memory ring bounded by `WithMaxRequests` (100 by default). PostgreSQL, Redis, MongoDB, and SQLite are separate modules and persist records according to their own configuration. See [Storage Backends](storage-backends.md).
 
-## Related Documentation
+Storage failures do not fail the application request path. Monitor your selected backend separately if durable capture is required.
 
-- [Configuration Options](configuration.md) - All available configuration options
-- [Storage Backends](storage-backends.md) - Configure where logs are stored
-- [Middleware Tracing](middleware-tracing.md) - How middleware tracing works
+## Related documentation
+
+- [Dashboard](dashboard.md)
+- [Configuration options](configuration.md)
+- [Storage backends](storage-backends.md)
+- [Middleware tracing](middleware-tracing.md)

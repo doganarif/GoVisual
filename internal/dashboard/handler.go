@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -30,6 +29,13 @@ var staticFiles embed.FS
 type HandlerOptions struct {
 	// EnableReplay opens POST /api/replay.
 	EnableReplay bool
+	// ReplayBaseURL pins replay traffic to an application URL. When empty, a
+	// localhost-only handler may use its validated request scheme and Host.
+	ReplayBaseURL string
+	// AllowLocalhostReplay permits the request Host fallback, but only when it
+	// names localhost or a literal loopback IP. Remote dashboards must instead
+	// configure ReplayBaseURL explicitly.
+	AllowLocalhostReplay bool
 	// ExposeSystemInfo opens GET /api/system-info.
 	ExposeSystemInfo bool
 	// ExposeEnvVars is the explicit allowlist of env var names the
@@ -39,6 +45,15 @@ type HandlerOptions struct {
 	// ActivityLog, if set, powers /api/agent-activity.
 	ActivityLog *store.ActivityLog
 }
+
+const captureTruncationMarker = "...[truncated by govisual]"
+
+const (
+	maxReplayRequestBody = 1 << 20
+	maxReplayPayload     = 8 << 20
+	maxReplayHeaders     = 100
+	maxReplayHeaderBytes = 64 << 10
+)
 
 // Handler is the HTTP handler for the dashboard
 type Handler struct {
@@ -172,7 +187,6 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -327,47 +341,85 @@ func (h *Handler) handleCompareRequests(w http.ResponseWriter, r *http.Request) 
 	encoder.Encode(compareRequests)
 }
 
-// handleReplayRequest replays a captured HTTP request against an arbitrary
-// destination. This is a powerful primitive and is therefore opt-in via
-// HandlerOptions.EnableReplay. Even when enabled, we deny:
-//   - non-http(s) schemes (gopher://, file://, ftp://, etc.)
-//   - hostnames that resolve to loopback / link-local / private / multicast IPs
-//
-// to mitigate SSRF against cloud metadata services or internal networks. Any
-// caller that needs to point replay at internal hosts is expected to manage
-// network policy themselves; we will not undo the deny-by-default.
+// handleReplayRequest loads a captured request by ID, applies shape-only
+// overrides, and replays it against the application origin. The client cannot
+// supply or alter the destination authority.
 func (h *Handler) handleReplayRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxReplayPayload)
 	decoder := json.NewDecoder(r.Body)
 	var replayRequest struct {
-		RequestID string            `json:"requestId"`
-		URL       string            `json:"url"`
-		Method    string            `json:"method"`
-		Headers   map[string]string `json:"headers"`
-		Body      string            `json:"body"`
+		RequestID string `json:"requestId"`
+		// URL accepts the v2.0.0 dashboard payload for compatibility. Its
+		// authority is ignored; only its path and query can be replayed.
+		URL     *string           `json:"url,omitempty"`
+		Method  *string           `json:"method,omitempty"`
+		Path    *string           `json:"path,omitempty"`
+		Headers map[string]string `json:"headers"`
+		Body    *string           `json:"body,omitempty"`
 	}
 	if err := decoder.Decode(&replayRequest); err != nil {
 		http.Error(w, "Invalid request format: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if err := validateReplayTarget(replayRequest.URL); err != nil {
-		http.Error(w, "Replay target rejected: "+err.Error(), http.StatusForbidden)
+	if replayRequest.RequestID == "" {
+		http.Error(w, "Request ID is required", http.StatusBadRequest)
+		return
+	}
+	original, ok := h.store.Get(replayRequest.RequestID)
+	if !ok {
+		http.Error(w, "Request not found", http.StatusNotFound)
 		return
 	}
 
-	// Block redirects — a 30x to a private IP would defeat the pre-flight
-	// check. Use a custom DialContext that re-validates the resolved IP at
-	// dial time so DNS-rebinding can't slip past the pre-flight check (the
-	// pre-flight resolves and validates, but DefaultTransport would otherwise
-	// resolve again from the OS cache moments later).
-	transport := &http.Transport{
-		DialContext: safeDialContext,
+	method := original.Method
+	if replayRequest.Method != nil && *replayRequest.Method != "" {
+		method = *replayRequest.Method
 	}
+	body := original.RequestBody
+	if strings.HasSuffix(original.RequestBody, captureTruncationMarker) &&
+		(replayRequest.Body == nil || *replayRequest.Body == original.RequestBody) {
+		http.Error(w, "Captured request body is truncated; provide the complete body before replaying", http.StatusBadRequest)
+		return
+	}
+	if replayRequest.Body != nil {
+		body = *replayRequest.Body
+	}
+	if len(body) > maxReplayRequestBody {
+		http.Error(w, "Replay request body exceeds 1 MiB", http.StatusRequestEntityTooLarge)
+		return
+	}
+	pathOverride := replayRequest.Path
+	if pathOverride == nil && replayRequest.URL != nil {
+		legacyURL, err := url.Parse(*replayRequest.URL)
+		if err != nil || legacyURL == nil || (legacyURL.Scheme != "http" && legacyURL.Scheme != "https") || legacyURL.Host == "" || legacyURL.User != nil || legacyURL.Fragment != "" {
+			http.Error(w, "Invalid replay target: invalid legacy URL", http.StatusBadRequest)
+			return
+		}
+		legacyPath := legacyURL.EscapedPath()
+		if legacyPath == "" {
+			legacyPath = "/"
+		}
+		if legacyURL.RawQuery != "" {
+			legacyPath += "?" + legacyURL.RawQuery
+		}
+		pathOverride = &legacyPath
+	}
+	target, err := h.replayTarget(r, original, pathOverride)
+	if err != nil {
+		http.Error(w, "Invalid replay target: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Preserve captured Accept-Encoding semantics and exact response bytes;
+	// automatic decompression would otherwise silently change the replay.
+	transport := &http.Transport{Proxy: nil, DisableCompression: true}
+	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: transport,
@@ -379,13 +431,23 @@ func (h *Handler) handleReplayRequest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, replayRequest.Method, replayRequest.URL, strings.NewReader(replayRequest.Body))
+	req, err := http.NewRequestWithContext(ctx, method, target, strings.NewReader(body))
 	if err != nil {
-		http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error creating request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	for key, value := range replayRequest.Headers {
-		req.Header.Add(key, value)
+	if replayRequest.Headers == nil {
+		// An omitted header map is the legacy "replay unchanged" shape.
+		copyReplayHeaders(req.Header, original.RequestHeaders, nil)
+	} else {
+		// The dashboard sends the complete edited map, so an absent key means
+		// the user removed that captured header.
+		copyReplayHeaders(req.Header, nil, replayRequest.Headers)
+	}
+	req.Header.Set("X-Govisual-Replay", "1")
+	if err := validateReplayHeaders(req.Header); err != nil {
+		http.Error(w, "Invalid replay headers: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	startTime := time.Now()
@@ -399,29 +461,33 @@ func (h *Handler) handleReplayRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Cap the captured response body so a hostile target can't OOM us.
 	const maxReplayBody = 1 << 20 // 1 MiB
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxReplayBody))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxReplayBody+1))
 	if err != nil {
 		http.Error(w, "Error reading response body: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-
-	headers := make(map[string][]string, len(resp.Header))
-	for k, v := range resp.Header {
-		headers[k] = v
+	bodyTruncated := len(respBody) > maxReplayBody
+	if bodyTruncated {
+		respBody = respBody[:maxReplayBody]
 	}
 
+	headerLog := &store.RequestLog{}
+	headerLog.SetResponseHeaders(resp.Header)
+
 	replayResponse := struct {
-		StatusCode      int                 `json:"statusCode"`
-		Headers         map[string][]string `json:"headers"`
-		Body            string              `json:"body"`
-		Duration        int64               `json:"duration"`
-		OriginalRequest string              `json:"originalRequest"`
+		StatusCode      int         `json:"statusCode"`
+		Headers         http.Header `json:"headers"`
+		Body            string      `json:"body"`
+		Duration        int64       `json:"duration"`
+		OriginalRequest string      `json:"originalRequest"`
+		BodyTruncated   bool        `json:"bodyTruncated,omitempty"`
 	}{
 		StatusCode:      resp.StatusCode,
-		Headers:         headers,
+		Headers:         headerLog.ResponseHeaders,
 		Body:            string(respBody),
 		Duration:        duration,
 		OriginalRequest: replayRequest.RequestID,
+		BodyTruncated:   bodyTruncated,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -433,78 +499,150 @@ func (h *Handler) handleReplayRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// validateReplayTarget rejects replay URLs that point at unsafe schemes or at
-// IPs the caller almost certainly did not mean to expose: loopback, link-local,
-// multicast, private ranges, and (critically on cloud) the IMDS address.
-func validateReplayTarget(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("invalid url: %w", err)
+func (h *Handler) replayTarget(r *http.Request, original *store.RequestLog, override *string) (string, error) {
+	baseRaw := h.opts.ReplayBaseURL
+	if baseRaw == "" {
+		if !h.opts.AllowLocalhostReplay || !isLocalReplayHost(r.Host) {
+			return "", fmt.Errorf("replay base URL is required unless the dashboard is localhost-only")
+		}
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		baseRaw = scheme + "://" + r.Host
 	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return fmt.Errorf("scheme %q not allowed", u.Scheme)
+	base, err := url.Parse(baseRaw)
+	if err != nil || base == nil {
+		return "", fmt.Errorf("invalid replay base URL")
 	}
-	host := u.Hostname()
-	if host == "" {
-		return errors.New("missing host")
+	base.Scheme = strings.ToLower(base.Scheme)
+	if (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.Opaque != "" || base.RawQuery != "" || base.ForceQuery || base.Fragment != "" {
+		return "", fmt.Errorf("invalid replay base URL")
 	}
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return fmt.Errorf("dns lookup failed: %w", err)
+
+	requestPath := original.Path
+	requestRawPath := original.RawPath
+	rawQuery := original.Query
+	if override != nil {
+		relative, err := url.Parse(*override)
+		if err != nil || relative.IsAbs() || relative.Host != "" || relative.Fragment != "" || !strings.HasPrefix(relative.Path, "/") {
+			return "", fmt.Errorf("path must be an absolute path without a host")
+		}
+		requestPath = relative.Path
+		requestRawPath = relative.RawPath
+		rawQuery = relative.RawQuery
 	}
-	for _, ip := range ips {
-		if isInternalIP(ip) {
-			return fmt.Errorf("target resolves to non-public address %s", ip)
+	if requestPath == "" || !strings.HasPrefix(requestPath, "/") {
+		return "", fmt.Errorf("captured request has an invalid path")
+	}
+
+	target := *base
+	target.Path = strings.TrimSuffix(base.Path, "/") + requestPath
+	if requestRawPath != "" {
+		target.RawPath = strings.TrimSuffix(base.EscapedPath(), "/") + requestRawPath
+	} else {
+		target.RawPath = ""
+	}
+	target.RawQuery = rawQuery
+	return target.String(), nil
+}
+
+var fixedHopByHopHeaders = map[string]struct{}{
+	"Connection":          {},
+	"Keep-Alive":          {},
+	"Proxy-Authenticate":  {},
+	"Proxy-Authorization": {},
+	"Proxy-Connection":    {},
+	"Te":                  {},
+	"Trailer":             {},
+	"Transfer-Encoding":   {},
+	"Upgrade":             {},
+	"Host":                {},
+	"Content-Length":      {},
+}
+
+func copyReplayHeaders(dst http.Header, captured http.Header, overrides map[string]string) {
+	blocked := make(map[string]struct{}, len(fixedHopByHopHeaders))
+	for name := range fixedHopByHopHeaders {
+		blocked[name] = struct{}{}
+	}
+	for key, values := range captured {
+		if http.CanonicalHeaderKey(key) == "Connection" {
+			blockConnectionTokens(blocked, values...)
+		}
+	}
+	for key, value := range overrides {
+		if http.CanonicalHeaderKey(key) == "Connection" {
+			blockConnectionTokens(blocked, value)
+		}
+	}
+
+	for key, values := range captured {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, skip := blocked[canonical]; skip || canonical == "" {
+			continue
+		}
+		for _, value := range values {
+			if value != "[redacted by govisual]" {
+				dst.Add(canonical, value)
+			}
+		}
+	}
+	for key, value := range overrides {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, skip := blocked[canonical]; skip || canonical == "" {
+			continue
+		}
+		if value == "[redacted by govisual]" {
+			continue
+		}
+		dst.Set(canonical, value)
+	}
+}
+
+func isLocalReplayHost(authority string) bool {
+	u, err := url.Parse("http://" + authority)
+	if err != nil || u.User != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			ip = ip4
+		}
+		return ip.IsLoopback()
+	}
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
+}
+
+func blockConnectionTokens(blocked map[string]struct{}, values ...string) {
+	for _, value := range values {
+		for _, token := range strings.Split(value, ",") {
+			if canonical := http.CanonicalHeaderKey(strings.TrimSpace(token)); canonical != "" {
+				blocked[canonical] = struct{}{}
+			}
+		}
+	}
+}
+
+func validateReplayHeaders(headers http.Header) error {
+	if len(headers) > maxReplayHeaders {
+		return fmt.Errorf("too many headers (maximum %d)", maxReplayHeaders)
+	}
+	remaining := maxReplayHeaderBytes
+	for key, values := range headers {
+		if len(key) > remaining {
+			return fmt.Errorf("headers exceed %d bytes", maxReplayHeaderBytes)
+		}
+		remaining -= len(key)
+		for _, value := range values {
+			if len(value) > remaining {
+				return fmt.Errorf("headers exceed %d bytes", maxReplayHeaderBytes)
+			}
+			remaining -= len(value)
 		}
 	}
 	return nil
-}
-
-// isInternalIP reports whether ip is one we should refuse to dial from a
-// replay endpoint. It normalizes IPv4-mapped IPv6 addresses (::ffff:a.b.c.d)
-// to their IPv4 form so an attacker cannot bypass the check by encoding a
-// private IPv4 address as IPv6.
-func isInternalIP(ip net.IP) bool {
-	if ip4 := ip.To4(); ip4 != nil {
-		ip = ip4
-	}
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
-		return true
-	}
-	// AWS / GCP / Azure IMDS endpoint.
-	if ip.Equal(net.IPv4(169, 254, 169, 254)) {
-		return true
-	}
-	return false
-}
-
-// safeDialContext resolves the host and rejects the dial if any resolved
-// address is private/loopback/IMDS. Crucially, the same resolution result is
-// used for the actual connection — this closes the DNS-rebinding TOCTOU
-// window between a pre-flight LookupIP and the transport's own resolution.
-func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("no addresses for %s", host)
-	}
-	for _, ip := range ips {
-		if isInternalIP(ip.IP) {
-			return nil, fmt.Errorf("dial rejected: %s resolves to non-public address %s", host, ip.IP)
-		}
-	}
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	// Dial the first resolved address directly so the kernel does not perform
-	// a second lookup that could race with the validation above.
-	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 }
 
 func (h *Handler) handleMetrics(w http.ResponseWriter, r *http.Request) {

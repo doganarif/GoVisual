@@ -74,6 +74,8 @@ failing request, and verify fixes with `diff_replay` (expect
 
 ## Security notes
 
-- The MCP endpoint answers loopback addresses only, unless `gvmcp.WithAllowRemote()` is set. Pair remote access with `gvmcp.WithToken("...")`.
+- The MCP endpoint answers loopback addresses only, unless `gvmcp.WithAllowRemote()` is set. Never enable remote access without `gvmcp.WithToken("...")` or equivalent authentication in an outer handler.
 - `replay_request` can change the method, path, headers, and body — but never the destination. Replays always target your app (`WithBaseURL`), so the endpoint is not an SSRF primitive.
+- Replay, diff, and generated curl commands require `WithBaseURL`; captured Host values are never trusted as destinations.
+- Redacted credentials are never replayed implicitly. Supply deliberate header overrides to `replay_request` or `diff_replay` when an authenticated comparison is required.
 - Sensitive headers (Authorization, Cookie, API keys) are redacted at capture time, before anything reaches the store or the agent.

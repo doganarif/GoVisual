@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -33,51 +34,70 @@ type PathMatcher interface {
 // It is safe for concurrent calls to Write (a handler that fans out writes across goroutines).
 type responseWriter struct {
 	http.ResponseWriter
-	mu          sync.Mutex
-	statusCode  int
-	wroteHeader bool
-	buffer      *bytes.Buffer
-	maxBody     int  // 0 means unlimited
-	truncated   bool // set once buffer hit maxBody
+	mu              sync.Mutex
+	statusCode      int
+	wroteHeader     bool
+	responseHeaders http.Header
+	buffer          *bytes.Buffer
+	maxBody         int  // 0 means unlimited
+	truncated       bool // set once buffer hit maxBody
 }
 
 // WriteHeader captures the status code
 func (w *responseWriter) WriteHeader(code int) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
 	if !w.wroteHeader {
 		w.statusCode = code
 		w.wroteHeader = true
+		w.responseHeaders = w.ResponseWriter.Header().Clone()
 	}
-	w.mu.Unlock()
-	w.ResponseWriter.WriteHeader(code)
 }
 
 // Write captures the response body up to maxBody bytes, then passes through.
 func (w *responseWriter) Write(b []byte) (int, error) {
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	if !w.wroteHeader {
 		w.statusCode = http.StatusOK
 		w.wroteHeader = true
 	}
-	if w.buffer != nil && !w.truncated {
+
+	written, err := w.ResponseWriter.Write(b)
+	if w.responseHeaders == nil {
+		w.responseHeaders = w.ResponseWriter.Header().Clone()
+	}
+	captured := written
+	if captured < 0 {
+		captured = 0
+	}
+	if captured > len(b) {
+		captured = len(b)
+	}
+	if w.buffer != nil && !w.truncated && captured > 0 {
 		remaining := w.maxBody - w.buffer.Len()
 		switch {
 		case w.maxBody <= 0:
-			w.buffer.Write(b)
+			w.buffer.Write(b[:captured])
 		case remaining > 0:
-			if remaining >= len(b) {
-				w.buffer.Write(b)
+			if remaining >= captured {
+				w.buffer.Write(b[:captured])
 			} else {
 				w.buffer.Write(b[:remaining])
 				w.buffer.WriteString(truncationMarker)
 				w.truncated = true
 			}
 		default:
+			w.buffer.WriteString(truncationMarker)
 			w.truncated = true
 		}
 	}
-	w.mu.Unlock()
-	return w.ResponseWriter.Write(b)
+	return written, err
 }
 
 // status returns the captured status code. It takes the lock so it stays
@@ -106,45 +126,192 @@ func (w *responseWriter) body() string {
 	return w.buffer.String()
 }
 
-// Flush implements http.Flusher, forwarding to the underlying writer if it supports it.
-func (w *responseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
+// headers returns the headers that were present when the response was
+// committed. If the handler never committed a response, net/http will emit a
+// 200 with the headers present when it returns, so snapshot those here.
+func (w *responseWriter) headers() http.Header {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.responseHeaders != nil {
+		return w.responseHeaders.Clone()
 	}
+	return w.ResponseWriter.Header().Clone()
 }
 
-// Hijack implements http.Hijacker, forwarding to the underlying writer if it supports it.
-func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+// Unwrap exposes the underlying writer to http.ResponseController and other
+// standard-library helpers without bypassing the capture wrapper.
+func (w *responseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *responseWriter) flushError() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	var err error
+	switch underlying := w.ResponseWriter.(type) {
+	case interface{ FlushError() error }:
+		err = underlying.FlushError()
+	case http.Flusher:
+		underlying.Flush()
+	default:
+		return http.ErrNotSupported
+	}
+	if !w.wroteHeader {
+		w.statusCode = http.StatusOK
+		w.wroteHeader = true
+		w.responseHeaders = w.ResponseWriter.Header().Clone()
+	}
+	return err
+}
+
+func (w *responseWriter) hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
 		return h.Hijack()
 	}
 	return nil, nil, errors.New("govisual: underlying ResponseWriter does not implement http.Hijacker")
 }
 
-// Push implements http.Pusher, forwarding to the underlying writer if it supports it.
-func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
+func (w *responseWriter) push(target string, opts *http.PushOptions) error {
 	if p, ok := w.ResponseWriter.(http.Pusher); ok {
 		return p.Push(target, opts)
 	}
 	return http.ErrNotSupported
 }
 
-// readBodyCapped reads up to maxBody bytes from r, returns the bytes, a boolean
-// indicating whether the body was truncated, and any read error.
-func readBodyCapped(r io.Reader, maxBody int) ([]byte, bool, error) {
+type responseFlusher struct{ writer *responseWriter }
+
+func (f *responseFlusher) Flush() { _ = f.writer.flushError() }
+func (f *responseFlusher) FlushError() error {
+	return f.writer.flushError()
+}
+
+type responseHijacker struct{ writer *responseWriter }
+
+func (h *responseHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return h.writer.hijack()
+}
+
+type responsePusher struct{ writer *responseWriter }
+
+func (p *responsePusher) Push(target string, opts *http.PushOptions) error {
+	return p.writer.push(target, opts)
+}
+
+// wrapResponseWriter exposes exactly the optional interfaces supported by the
+// underlying writer. This keeps handler type assertions and ResponseController
+// behavior identical to an unwrapped response.
+func wrapResponseWriter(w *responseWriter) http.ResponseWriter {
+	_, flushes := w.ResponseWriter.(http.Flusher)
+	if _, ok := w.ResponseWriter.(interface{ FlushError() error }); ok {
+		flushes = true
+	}
+	_, hijacks := w.ResponseWriter.(http.Hijacker)
+	_, pushes := w.ResponseWriter.(http.Pusher)
+
+	switch {
+	case flushes && hijacks && pushes:
+		return struct {
+			*responseWriter
+			*responseFlusher
+			*responseHijacker
+			*responsePusher
+		}{w, &responseFlusher{w}, &responseHijacker{w}, &responsePusher{w}}
+	case flushes && hijacks:
+		return struct {
+			*responseWriter
+			*responseFlusher
+			*responseHijacker
+		}{w, &responseFlusher{w}, &responseHijacker{w}}
+	case flushes && pushes:
+		return struct {
+			*responseWriter
+			*responseFlusher
+			*responsePusher
+		}{w, &responseFlusher{w}, &responsePusher{w}}
+	case hijacks && pushes:
+		return struct {
+			*responseWriter
+			*responseHijacker
+			*responsePusher
+		}{w, &responseHijacker{w}, &responsePusher{w}}
+	case flushes:
+		return struct {
+			*responseWriter
+			*responseFlusher
+		}{w, &responseFlusher{w}}
+	case hijacks:
+		return struct {
+			*responseWriter
+			*responseHijacker
+		}{w, &responseHijacker{w}}
+	case pushes:
+		return struct {
+			*responseWriter
+			*responsePusher
+		}{w, &responsePusher{w}}
+	default:
+		return w
+	}
+}
+
+type replayReadCloser struct {
+	prefix     *bytes.Reader
+	body       io.ReadCloser
+	pendingErr error
+}
+
+func (r *replayReadCloser) Read(p []byte) (int, error) {
+	if r.prefix.Len() > 0 {
+		n, err := r.prefix.Read(p)
+		if n > 0 && r.prefix.Len() == 0 && r.pendingErr != nil {
+			err = r.pendingErr
+			r.pendingErr = nil
+		}
+		return n, err
+	}
+	if r.pendingErr != nil {
+		err := r.pendingErr
+		r.pendingErr = nil
+		return 0, err
+	}
+	return r.body.Read(p)
+}
+
+func (r *replayReadCloser) Close() error {
+	return r.body.Close()
+}
+
+// captureRequestBody reads only enough data to build the bounded capture and
+// then reconstructs a stream containing every byte consumed followed by the
+// untouched remainder. The handler therefore observes exactly the original
+// request body even when the capture is truncated.
+func captureRequestBody(body io.ReadCloser, maxBody int) ([]byte, io.ReadCloser, error) {
 	if maxBody <= 0 {
-		data, err := io.ReadAll(r)
-		return data, false, err
+		data, err := io.ReadAll(body)
+		return data, &replayReadCloser{prefix: bytes.NewReader(data), body: body, pendingErr: err}, err
 	}
-	limited := io.LimitReader(r, int64(maxBody)+1)
-	data, err := io.ReadAll(limited)
+
+	readLimit := int64(maxBody)
+	if maxBody < int(^uint(0)>>1) {
+		readLimit++
+	}
+	consumed, err := io.ReadAll(io.LimitReader(body, readLimit))
+	restored := &replayReadCloser{
+		prefix:     bytes.NewReader(consumed),
+		body:       body,
+		pendingErr: err,
+	}
 	if err != nil {
-		return data, false, err
+		return consumed, restored, err
 	}
-	if len(data) > maxBody {
-		return append(data[:maxBody], []byte(truncationMarker)...), true, nil
+	if len(consumed) > maxBody {
+		captured := make([]byte, 0, maxBody+len(truncationMarker))
+		captured = append(captured, consumed[:maxBody]...)
+		captured = append(captured, truncationMarker...)
+		return captured, restored, nil
 	}
-	return data, false, nil
+	return consumed, restored, nil
 }
 
 // Wrap wraps an http.Handler with the request visualization middleware
@@ -157,6 +324,13 @@ func Wrap(handler http.Handler, st store.Store, logRequestBody, logResponseBody 
 // and the sampling rate (0..1; requests that lose the coin toss pass through
 // uncaptured).
 func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, maxBody int, sampleRate float64) http.Handler {
+	return WrapWithLimitsAndErrorHandler(handler, st, logRequestBody, logResponseBody, pathMatcher, maxBody, sampleRate, nil)
+}
+
+// WrapWithLimitsAndErrorHandler adds an optional callback for persistence
+// failures. A nil callback logs the error and still leaves the request path
+// unaffected.
+func WrapWithLimitsAndErrorHandler(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, maxBody int, sampleRate float64, onError func(error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check if the path should be ignored
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
@@ -176,15 +350,16 @@ func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logRes
 		ctx, collector := WithLogCollector(r.Context())
 		r = r.WithContext(ctx)
 
+		var requestBodyErr error
 		// Capture request body if enabled
 		if logRequestBody && r.Body != nil {
-			bodyBytes, _, err := readBodyCapped(r.Body, maxBody)
-			r.Body.Close()
+			bodyBytes, restoredBody, err := captureRequestBody(r.Body, maxBody)
+			r.Body = restoredBody
 			if err == nil {
 				reqLog.RequestBody = string(bodyBytes)
+			} else {
+				requestBodyErr = fmt.Errorf("govisual: capture request body: %w", err)
 			}
-			// Always restore a body so the handler can read what was buffered.
-			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
 		// Create response writer wrapper
@@ -229,10 +404,14 @@ func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logRes
 			if logResponseBody {
 				reqLog.ResponseBody = resWriter.body()
 			}
+			reqLog.SetResponseHeaders(resWriter.headers())
 
 			reqLog.Logs = collector.Snapshot()
 
-			addToStore(st, reqLog)
+			if requestBodyErr != nil {
+				reportError(onError, requestBodyErr)
+			}
+			addToStore(st, reqLog, onError)
 		}
 
 		defer func() {
@@ -246,13 +425,28 @@ func WrapWithLimits(handler http.Handler, st store.Store, logRequestBody, logRes
 			}
 		}()
 
-		handler.ServeHTTP(resWriter, r)
+		handler.ServeHTTP(wrapResponseWriter(resWriter), r)
 		finish(false)
 	})
 }
 
 // addToStore persists the entry. Storage errors are deliberately not allowed
 // to block or fail the request path.
-func addToStore(st store.Store, reqLog *store.RequestLog) {
-	_ = st.Add(reqLog)
+func addToStore(st store.Store, reqLog *store.RequestLog, onError func(error)) {
+	if err := st.Add(reqLog); err != nil {
+		reportError(onError, fmt.Errorf("govisual: store request: %w", err))
+	}
+}
+
+func reportError(onError func(error), err error) {
+	if onError == nil {
+		log.Printf("%v", err)
+		return
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("govisual: error handler panic: %v", recovered)
+		}
+	}()
+	onError(err)
 }

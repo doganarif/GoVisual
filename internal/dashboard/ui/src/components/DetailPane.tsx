@@ -286,19 +286,42 @@ function formatBody(body?: string): string {
 }
 
 function copyAsCurl(req: RequestLog) {
-  const host = req.RequestHeaders?.Host?.[0] || "localhost";
-  const url = `http://${host}${req.Path}${req.Query ? "?" + req.Query : ""}`;
-  const parts = [`curl -X ${req.Method} ${shellQuote(url)}`];
-  for (const [k, values] of Object.entries(req.RequestHeaders || {})) {
+  const url = `${window.location.origin}${req.RawPath || req.Path}${req.Query ? "?" + req.Query : ""}`;
+  const parts = [`curl --request ${shellQuote(req.Method)} ${shellQuote(url)}`];
+  const headers = safeReplayHeaders(req.RequestHeaders || {});
+  for (const [k, values] of Object.entries(headers)) {
     for (const v of values) {
       parts.push(`-H ${shellQuote(`${k}: ${v}`)}`);
     }
   }
   if (req.RequestBody) {
-    parts.push(`-d ${shellQuote(req.RequestBody)}`);
+    parts.push(`--data-raw ${shellQuote(req.RequestBody)}`);
   }
   const cmd = parts.join(" \\\n  ");
   navigator.clipboard.writeText(cmd).catch(() => {});
+}
+
+function safeReplayHeaders(headers: Record<string, string[]>): Record<string, string[]> {
+  const blocked = new Set([
+    "connection", "content-length", "host", "keep-alive",
+    "proxy-authenticate", "proxy-authorization", "proxy-connection", "te",
+    "trailer", "transfer-encoding", "upgrade",
+  ]);
+  for (const [key, values] of Object.entries(headers)) {
+    if (key.toLowerCase() !== "connection") continue;
+    for (const value of values) {
+      for (const token of value.split(",")) blocked.add(token.trim().toLowerCase());
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(headers)
+      .filter(([key]) => !blocked.has(key.toLowerCase()))
+      .map(([key, values]) => [
+        key,
+        values.filter((value) => value !== "[redacted by govisual]"),
+      ])
+      .filter(([, values]) => values.length > 0)
+  );
 }
 
 function shellQuote(s: string): string {
@@ -338,12 +361,14 @@ function Overview({ request }: { request: RequestLog }) {
         </div>
       </section>
 
-      {request.Error && (
+      {(request.Error || request.PanicStack) && (
         <section class="border border-red-200 bg-red-50/50 rounded-lg p-4">
           <h3 class="text-sm font-medium text-red-800 mb-1">Error</h3>
-          <pre class="text-xs font-mono text-red-700 whitespace-pre-wrap">
-            {request.Error}
-          </pre>
+          {request.Error && (
+            <pre class="text-xs font-mono text-red-700 whitespace-pre-wrap">
+              {request.Error}
+            </pre>
+          )}
           {request.PanicStack && (
             <pre class="text-[11px] font-mono text-red-600/80 whitespace-pre-wrap break-all mt-3 pt-3 border-t border-red-200 max-h-64 overflow-auto">
               {request.PanicStack}
@@ -607,20 +632,21 @@ function Performance({
   if (!metrics) {
     return (
       <div class="text-xs text-zinc-500 text-center py-8">
-        Profiling is not enabled. Pass{" "}
+        No retained profile exists for this request. Enable profiling with{" "}
         <code class="font-mono bg-zinc-100 px-1 rounded">
           govisual.WithProfiling(true)
         </code>{" "}
-        on the server to see CPU and memory metrics here.
+        and check the configured profile threshold and profile types.
       </div>
     );
   }
   return (
     <Fragment>
-      <section class="grid grid-cols-4 gap-3">
-        <Stat label="CPU time" value={formatDurationNs(metrics.cpu_time)} />
-        <Stat label="Memory" value={formatBytes(metrics.memory_alloc)} />
-        <Stat label="Goroutines" value={String(metrics.num_goroutines || 0)} />
+      <section class="grid grid-cols-5 gap-3">
+        <Stat label="Allocated during window" value={formatBytes(metrics.memory_total_alloc)} />
+        <Stat label="Process heap" value={formatBytes(metrics.memory_alloc)} />
+        <Stat label="Process goroutines" value={String(metrics.num_goroutines ?? 0)} />
+        <Stat label="GC runs" value={String(metrics.num_gc ?? 0)} />
         <Stat label="GC pause" value={formatDurationNs(metrics.gc_pause_total)} />
       </section>
 

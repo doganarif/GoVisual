@@ -3,7 +3,6 @@ package middleware
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"math/rand/v2"
 	"net/http"
 	"runtime/debug"
@@ -28,6 +27,12 @@ func WrapWithProfiling(handler http.Handler, st store.Store, logRequestBody, log
 
 // WrapWithProfilingAndLimits is identical to WrapWithProfiling but exposes the captured-body size cap.
 func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int, sampleRate float64) http.Handler {
+	return WrapWithProfilingLimitsAndErrorHandler(handler, st, logRequestBody, logResponseBody, pathMatcher, profiler, maxBody, sampleRate, nil)
+}
+
+// WrapWithProfilingLimitsAndErrorHandler adds an optional callback for store
+// failures while retaining the existing profiling middleware API.
+func WrapWithProfilingLimitsAndErrorHandler(handler http.Handler, st store.Store, logRequestBody, logResponseBody bool, pathMatcher PathMatcher, profiler *profiling.Profiler, maxBody int, sampleRate float64, onError func(error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if pathMatcher != nil && pathMatcher.ShouldIgnorePath(r.URL.Path) {
 			handler.ServeHTTP(w, r)
@@ -59,13 +64,15 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 		}
 		r = r.WithContext(ctx)
 
+		var requestBodyErr error
 		if logRequestBody && r.Body != nil {
-			bodyBytes, _, err := readBodyCapped(r.Body, maxBody)
-			r.Body.Close()
+			bodyBytes, restoredBody, err := captureRequestBody(r.Body, maxBody)
+			r.Body = restoredBody
 			if err == nil {
 				reqLog.RequestBody = string(bodyBytes)
+			} else {
+				requestBodyErr = fmt.Errorf("govisual: capture request body: %w", err)
 			}
-			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		}
 
 		resWriter := &responseWriter{
@@ -104,10 +111,13 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 					"type":       trace.Type,
 					"start_time": trace.StartTime,
 					"end_time":   trace.EndTime,
-					"duration":   trace.Duration.Milliseconds(),
-					"status":     trace.Status,
-					"details":    trace.Details,
-					"children":   trace.Children,
+					// Keep the top-level duration in milliseconds for compatibility
+					// with persisted v2.0.0 RequestLog records. Nested TraceEntry
+					// durations are time.Duration values encoded as nanoseconds.
+					"duration": trace.Duration.Milliseconds(),
+					"status":   trace.Status,
+					"details":  trace.Details,
+					"children": trace.Children,
 				}
 				if trace.Error != "" {
 					traceMap["error"] = trace.Error
@@ -126,10 +136,14 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 			if logResponseBody {
 				reqLog.ResponseBody = resWriter.body()
 			}
+			reqLog.SetResponseHeaders(resWriter.headers())
 
 			reqLog.Logs = collector.Snapshot()
 
-			_ = st.Add(reqLog)
+			if requestBodyErr != nil {
+				reportError(onError, requestBodyErr)
+			}
+			addToStore(st, reqLog, onError)
 		}
 
 		defer func() {
@@ -143,7 +157,7 @@ func WrapWithProfilingAndLimits(handler http.Handler, st store.Store, logRequest
 			}
 		}()
 
-		handler.ServeHTTP(resWriter, r)
+		handler.ServeHTTP(wrapResponseWriter(resWriter), r)
 		finish(nil)
 	})
 }

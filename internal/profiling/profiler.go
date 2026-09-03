@@ -59,6 +59,8 @@ type Metrics struct {
 	// Baseline of runtime.MemStats.TotalAlloc at StartProfiling, used to
 	// compute MemoryTotalAlloc as a delta.
 	totalAllocStart uint64
+	numGCStart      uint32
+	gcPauseStart    time.Duration
 
 	mu sync.Mutex
 }
@@ -186,10 +188,9 @@ func (p *Profiler) StartProfiling(ctx context.Context, requestID string) context
 	if p.hasProfile(ProfileMemory) {
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
-		metrics.MemoryAlloc = m.Alloc
 		metrics.totalAllocStart = m.TotalAlloc
-		metrics.NumGC = m.NumGC
-		metrics.GCPauseTotal = time.Duration(m.PauseTotalNs)
+		metrics.numGCStart = m.NumGC
+		metrics.gcPauseStart = time.Duration(m.PauseTotalNs)
 	}
 
 	// Capture initial goroutine count
@@ -264,7 +265,9 @@ func (p *Profiler) EndProfiling(ctx context.Context) *Metrics {
 		metrics.MemoryAlloc = m.Alloc
 
 		// Calculate GC impact
-		gcPauseIncrease := time.Duration(m.PauseTotalNs) - metrics.GCPauseTotal
+		gcPauseIncrease := time.Duration(m.PauseTotalNs) - metrics.gcPauseStart
+		metrics.NumGC = m.NumGC - metrics.numGCStart
+		metrics.GCPauseTotal = gcPauseIncrease
 		if gcPauseIncrease > metrics.Duration/10 { // GC took more than 10% of time
 			metrics.Bottlenecks = append(metrics.Bottlenecks, Bottleneck{
 				Type:        "gc",
@@ -303,6 +306,8 @@ func (m *Metrics) snapshot() *Metrics {
 		CPUProfile:       m.CPUProfile,
 		HeapProfile:      m.HeapProfile,
 		totalAllocStart:  m.totalAllocStart,
+		numGCStart:       m.numGCStart,
+		gcPauseStart:     m.gcPauseStart,
 	}
 	if m.FunctionTimings != nil {
 		c.FunctionTimings = make(map[string]time.Duration, len(m.FunctionTimings))

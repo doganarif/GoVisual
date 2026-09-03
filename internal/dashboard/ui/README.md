@@ -1,67 +1,27 @@
-# GoVisual Dashboard (Preact)
+# GoVisual Dashboard UI
 
-Modern, fast dashboard built with Preact and shadcn-ui components.
+The embedded GoVisual v2 dashboard is built with Preact, TypeScript, Tailwind CSS, Radix UI primitives, and esbuild.
 
 ## Development
 
-### Prerequisites
-
-- Node.js 18+
-- npm or yarn
-
-### Setup
+Use Node.js 22 and install the committed dependency graph:
 
 ```bash
-# Install dependencies
-npm install
-
-# Build for production
+npm ci
+npm run typecheck
 npm run build
-
-# Watch mode for development
-npm run dev
 ```
 
-## Architecture
+`npm run dev` watches JavaScript and TypeScript changes. Restart it after changing Tailwind classes or `src/styles.css` so the CSS is rebuilt too.
 
-- **Preact**: Lightweight React alternative (3KB)
-- **shadcn-ui**: Modern, accessible UI components
-- **Tailwind CSS**: Utility-first CSS framework
-- **esbuild**: Fast JavaScript bundler
-- **TypeScript**: Type safety
+Source files live under `src/`. The production build writes `dashboard.js` and `styles.css` to `../static/`; both files are committed because the Go dashboard handler embeds them. Include regenerated assets with every UI change. CI rebuilds the assets and fails if the committed output is stale.
 
-## Project Structure
+The main UI is organized around:
 
-```
-src/
-├── components/
-│   ├── ui/              # shadcn-ui components
-│   ├── RequestTable.tsx  # Request list component
-│   ├── RequestDetails.tsx # Request details view
-│   └── PerformanceProfiler.tsx # Performance profiling UI
-├── lib/
-│   ├── api.ts           # API client
-│   └── utils.ts         # Utility functions
-├── App.tsx              # Main application component
-└── index.tsx            # Entry point
-```
+- `App.tsx` for request state, SSE updates, filters, and top-level views
+- `components/RequestList.tsx` and `components/DetailPane.tsx` for request inspection
+- `components/RequestComparison.tsx` and `components/RequestReplay.tsx` for request actions
+- `components/Analytics.tsx`, `AgentActivity.tsx`, and `EnvironmentInfo.tsx` for secondary views
+- `lib/api.ts` for dashboard API and event-stream types
 
-## Features
-
-- **Real-time Updates**: Live request monitoring via SSE
-- **Performance Profiling**: CPU, memory, and goroutine tracking
-- **Flame Graphs**: Interactive D3.js visualization
-- **Bottleneck Detection**: Automatic performance issue identification
-- **Clean UI**: Modern, minimal design with no gradients
-- **Fast**: Built with performance in mind
-
-## Building for Production
-
-The build process:
-
-1. Compiles TypeScript to JavaScript
-2. Bundles all dependencies with esbuild
-3. Processes CSS with Tailwind
-4. Outputs to `../static/` directory
-
-The Go backend embeds these static files for distribution.
+The server sends request, replay-response, and top-level middleware-trace durations in milliseconds. Profiling, SQL, outbound HTTP, agent activity, and nested trace durations are Go `time.Duration` values encoded as nanoseconds; format them accordingly in the UI.

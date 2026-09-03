@@ -2,6 +2,7 @@ package store
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -37,5 +38,24 @@ func TestNewRequestLog(t *testing.T) {
 
 	if log.Timestamp.IsZero() {
 		t.Errorf("expected timestamp set, got zero value")
+	}
+}
+
+func TestSetResponseHeadersCopiesEmptyMap(t *testing.T) {
+	headers := make(http.Header)
+	requestLog := &RequestLog{}
+	requestLog.SetResponseHeaders(headers)
+
+	headers.Set("Set-Cookie", "session=secret")
+	if got := requestLog.ResponseHeaders.Get("Set-Cookie"); got != "" {
+		t.Fatalf("response headers alias caller map and exposed %q", got)
+	}
+}
+
+func TestNewRequestLogPreservesEscapedPath(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://localhost/users/a%2Fb", nil)
+	requestLog := NewRequestLog(req)
+	if requestLog.Path != "/users/a/b" || requestLog.RawPath != "/users/a%2Fb" {
+		t.Fatalf("captured path = %q raw=%q", requestLog.Path, requestLog.RawPath)
 	}
 }

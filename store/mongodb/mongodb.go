@@ -77,12 +77,14 @@ func (m *Store) Add(reqLog *store.RequestLog) error {
 		return fmt.Errorf("mongodb insert: %w", err)
 	}
 	if m.insertCount.Add(1)%cleanupEveryN == 0 {
-		m.cleanup()
+		if err := m.cleanup(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (m *Store) cleanup() {
+func (m *Store) cleanup() error {
 	ctx, cancel := m.opCtx()
 	defer cancel()
 
@@ -95,8 +97,7 @@ func (m *Store) cleanup() {
 
 	cursor, err := m.collection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
-		log.Printf("govisual: failed to find oldest MongoDB logs: %v", err)
-		return
+		return fmt.Errorf("mongodb cleanup query: %w", err)
 	}
 	defer cursor.Close(ctx)
 
@@ -106,18 +107,21 @@ func (m *Store) cleanup() {
 			ID string `bson:"_id"`
 		}
 		if err := cursor.Decode(&doc); err != nil {
-			log.Printf("govisual: failed to decode oldest MongoDB log: %v", err)
-			continue
+			return fmt.Errorf("mongodb cleanup decode: %w", err)
 		}
 		ids = append(ids, doc.ID)
 	}
+	if err := cursor.Err(); err != nil {
+		return fmt.Errorf("mongodb cleanup cursor: %w", err)
+	}
 	if len(ids) == 0 {
-		return
+		return nil
 	}
 
 	if _, err := m.collection.DeleteMany(ctx, bson.M{"_id": bson.M{"$in": ids}}); err != nil {
-		log.Printf("govisual: failed to delete oldest MongoDB logs: %v", err)
+		return fmt.Errorf("mongodb cleanup delete: %w", err)
 	}
+	return nil
 }
 
 func (m *Store) Get(id string) (*store.RequestLog, bool) {

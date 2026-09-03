@@ -2,7 +2,9 @@ export interface RequestLog {
   ID: string;
   Timestamp: string;
   Method: string;
+  Host?: string;
   Path: string;
+  RawPath?: string;
   Query: string;
   RequestHeaders: Record<string, string[]>;
   ResponseHeaders: Record<string, string[]>;
@@ -94,8 +96,8 @@ export interface SystemInfo {
 
 export interface ReplayRequest {
   requestId: string;
-  url: string;
   method: string;
+  path: string;
   headers: Record<string, string>;
   body: string;
 }
@@ -104,6 +106,7 @@ export interface ReplayResponse {
   statusCode: number;
   headers: Record<string, string[]>;
   body: string;
+  bodyTruncated?: boolean;
   duration: number;
   originalRequest: string;
 }

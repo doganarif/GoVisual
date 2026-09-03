@@ -21,7 +21,9 @@ func Run(t *testing.T, s store.Store) {
 		ID:         "test-1",
 		Timestamp:  time.Now(),
 		Method:     "GET",
+		Host:       "api.example.test:8443",
 		Path:       "/test",
+		RawPath:    "/te%73t",
 		StatusCode: 200,
 	}
 
@@ -30,6 +32,12 @@ func Run(t *testing.T, s store.Store) {
 	got, ok := s.Get("test-1")
 	if !ok || got.ID != "test-1" {
 		t.Errorf("expected to get log with ID 'test-1', got %+v", got)
+	}
+	if got != nil && got.Host != log.Host {
+		t.Errorf("Host dropped by store round trip: got %q, want %q", got.Host, log.Host)
+	}
+	if got != nil && got.RawPath != log.RawPath {
+		t.Errorf("RawPath dropped by store round trip: got %q, want %q", got.RawPath, log.RawPath)
 	}
 
 	all := s.GetAll()
@@ -56,7 +64,9 @@ func Run(t *testing.T, s store.Store) {
 		ID:         "rich-1",
 		Timestamp:  time.Now(),
 		Method:     "POST",
+		Host:       "admin.example.test",
 		Path:       "/api/things",
+		RawPath:    "/api/%74hings",
 		StatusCode: 500,
 		Error:      "panic: kaboom",
 		PanicStack: "goroutine 1 [running]:\nmain.boom()\n\t/tmp/x.go:5",
@@ -79,6 +89,12 @@ func Run(t *testing.T, s store.Store) {
 	}
 	if back.PanicStack == "" {
 		t.Error("PanicStack dropped by store round trip")
+	}
+	if back.Host != rich.Host {
+		t.Errorf("Host dropped by rich store round trip: got %q, want %q", back.Host, rich.Host)
+	}
+	if back.RawPath != rich.RawPath {
+		t.Errorf("RawPath dropped by rich store round trip: got %q, want %q", back.RawPath, rich.RawPath)
 	}
 	if len(back.Logs) != 1 || back.Logs[0].Message != "before panic" {
 		t.Errorf("Logs dropped by store round trip: %+v", back.Logs)

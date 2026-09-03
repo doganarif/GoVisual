@@ -41,7 +41,7 @@ export function FlameGraph({
       .padding(1)
       .round(true);
 
-    partition(root);
+    const partitioned = partition(root);
 
     // Color scale
     const color = d3.scaleOrdinal(d3.schemeTableau10);
@@ -49,7 +49,7 @@ export function FlameGraph({
     // Create groups for each node
     const g = svg
       .selectAll("g")
-      .data(root.descendants())
+      .data(partitioned.descendants())
       .join("g")
       .attr("transform", (d) => `translate(${d.x0},${d.depth * cellHeight})`);
 
@@ -67,7 +67,7 @@ export function FlameGraph({
       .on("mouseover", function (event, d) {
         if (tooltipRef.current) {
           const percentage = (
-            ((d.value || 0) / (root.value || 1)) *
+            ((d.value || 0) / (partitioned.value || 1)) *
             100
           ).toFixed(2);
           tooltipRef.current.innerHTML = `

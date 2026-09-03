@@ -1,5 +1,5 @@
 import { h, Fragment } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { api, RequestLog } from "./lib/api";
 import { RailNav, View } from "./components/RailNav";
 import { RequestList } from "./components/RequestList";
@@ -17,6 +17,23 @@ type StatusFilter = Set<"2xx" | "3xx" | "4xx" | "5xx">;
 // 200ms to be useful as a triage tool rather than a profiler.
 const SLOW_MS = 200;
 
+function isErrorRequest(request: RequestLog): boolean {
+  return (
+    request.StatusCode >= 400 ||
+    Boolean(request.Error?.trim()) ||
+    Boolean(request.PanicStack?.trim())
+  );
+}
+
+function dedupeRequests(requests: RequestLog[]): RequestLog[] {
+  const seen = new Set<string>();
+  return requests.filter((request) => {
+    if (seen.has(request.ID)) return false;
+    seen.add(request.ID);
+    return true;
+  });
+}
+
 export function App() {
   const [requests, setRequests] = useState<RequestLog[]>([]);
   const [view, setView] = useState<View>("inbox");
@@ -33,38 +50,30 @@ export function App() {
   const [replayRequest, setReplayRequest] = useState<RequestLog | null>(null);
   const [live, setLive] = useState(false);
 
-  // Initial fetch + live subscription. The SSE callback uses refs to read the
-  // current filters/selection without resubscribing on every keystroke.
-  const searchRef = useRef(search);
-  const statusFilterRef = useRef(statusFilter);
-  const viewRef = useRef(view);
-  useEffect(() => {
-    searchRef.current = search;
-  }, [search]);
-  useEffect(() => {
-    statusFilterRef.current = statusFilter;
-  }, [statusFilter]);
-  useEffect(() => {
-    viewRef.current = view;
-  }, [view]);
-
+  // Initial fetch + live subscription.
   useEffect(() => {
     const controller = new AbortController();
+    // SSE sends an authoritative snapshot as soon as it connects. If that
+    // beats the REST request, do not let the older REST response overwrite it.
+    let receivedLiveEvent = false;
     api
       .getRequests(controller.signal)
-      .then((data) => setRequests(data))
+      .then((data) => {
+        if (!receivedLiveEvent) setRequests(dedupeRequests(data));
+      })
       .catch((err) => {
         if (err?.name !== "AbortError") console.error(err);
       });
 
     const es = api.subscribeToEvents(
       (event) => {
+        receivedLiveEvent = true;
         setLive(true);
         if (event.kind === "snapshot") {
-          setRequests(event.data);
+          setRequests(dedupeRequests(event.data));
           return;
         }
-        setRequests((prev) => [...event.data, ...prev]);
+        setRequests((prev) => dedupeRequests([...event.data, ...prev]));
       },
       () => setLive(false)
     );
@@ -80,7 +89,7 @@ export function App() {
   const filtered = useMemo(() => {
     let out = requests;
     if (view === "errors") {
-      out = out.filter((r) => r.StatusCode >= 400);
+      out = out.filter(isErrorRequest);
     } else if (view === "slow") {
       out = out.filter((r) => r.Duration >= SLOW_MS);
     }
@@ -98,7 +107,7 @@ export function App() {
   }, [requests, view, statusFilter, search]);
 
   const errorCount = useMemo(
-    () => requests.filter((r) => r.StatusCode >= 400).length,
+    () => requests.filter(isErrorRequest).length,
     [requests]
   );
 
@@ -260,7 +269,7 @@ function titleFor(v: View): string {
 function subtitleFor(v: View): string | undefined {
   switch (v) {
     case "errors":
-      return "Status 4xx and 5xx";
+      return "HTTP errors, captured errors, and panics";
     case "slow":
       return `Duration ≥ ${SLOW_MS}ms`;
     default:

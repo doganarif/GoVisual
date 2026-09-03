@@ -67,7 +67,9 @@ func (s *Store) createTable() error {
 			id TEXT PRIMARY KEY,
 			timestamp TIMESTAMP WITH TIME ZONE,
 			method TEXT,
+			host TEXT,
 			path TEXT,
+			raw_path TEXT,
 			query TEXT,
 			request_headers JSONB,
 			response_headers JSONB,
@@ -87,10 +89,21 @@ func (s *Store) createTable() error {
 		return err
 	}
 
-	// Add extras to pre-v2 tables. Postgres has IF NOT EXISTS on ADD COLUMN.
-	alter := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS extras JSONB", s.tableName)
-	if _, err := s.db.Exec(alter); err != nil {
-		log.Printf("govisual: ALTER TABLE for extras column failed: %v", err)
+	// Upgrade existing tables one column at a time. IF NOT EXISTS makes this
+	// safe when multiple application instances initialize concurrently.
+	migrations := []struct {
+		name       string
+		definition string
+	}{
+		{name: "extras", definition: "JSONB"},
+		{name: "host", definition: "TEXT"},
+		{name: "raw_path", definition: "TEXT"},
+	}
+	for _, migration := range migrations {
+		alter := fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", s.tableName, migration.name, migration.definition)
+		if _, err := s.db.Exec(alter); err != nil {
+			return fmt.Errorf("add %s column: %w", migration.name, err)
+		}
 	}
 
 	indexQuery := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_timestamp_idx ON %s (timestamp DESC)",
@@ -107,17 +120,16 @@ type extrasPayload struct {
 	PerformanceMetrics *store.PerformanceMetrics `json:"performance_metrics,omitempty"`
 }
 
-func encodeExtras(l *store.RequestLog) string {
+func encodeExtras(l *store.RequestLog) (string, error) {
 	p := extrasPayload{Logs: l.Logs, PanicStack: l.PanicStack, PerformanceMetrics: l.PerformanceMetrics}
 	if len(p.Logs) == 0 && p.PanicStack == "" && p.PerformanceMetrics == nil {
-		return "{}"
+		return "{}", nil
 	}
 	data, err := json.Marshal(p)
 	if err != nil {
-		log.Printf("govisual: marshaling extras: %v", err)
-		return "{}"
+		return "", fmt.Errorf("marshal extras: %w", err)
 	}
-	return string(data)
+	return string(data), nil
 }
 
 func decodeExtras(s string, l *store.RequestLog) {
@@ -136,37 +148,54 @@ func decodeExtras(s string, l *store.RequestLog) {
 
 // Add adds a new request log to the store
 func (s *Store) Add(reqLog *store.RequestLog) error {
-	reqHeaders := prepareJSON(reqLog.RequestHeaders)
-	respHeaders := prepareJSON(reqLog.ResponseHeaders)
+	reqHeaders, err := prepareJSON(reqLog.RequestHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal request headers: %w", err)
+	}
+	respHeaders, err := prepareJSON(reqLog.ResponseHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal response headers: %w", err)
+	}
 
 	middlewareTrace := "[]"
 	if len(reqLog.MiddlewareTrace) > 0 {
-		if data, err := json.Marshal(reqLog.MiddlewareTrace); err == nil {
-			middlewareTrace = string(data)
+		data, err := json.Marshal(reqLog.MiddlewareTrace)
+		if err != nil {
+			return fmt.Errorf("marshal middleware trace: %w", err)
 		}
+		middlewareTrace = string(data)
 	}
 
 	routeTrace := "{}"
 	if reqLog.RouteTrace != nil {
-		if data, err := json.Marshal(reqLog.RouteTrace); err == nil {
-			routeTrace = string(data)
+		data, err := json.Marshal(reqLog.RouteTrace)
+		if err != nil {
+			return fmt.Errorf("marshal route trace: %w", err)
 		}
+		routeTrace = string(data)
+	}
+
+	extras, err := encodeExtras(reqLog)
+	if err != nil {
+		return err
 	}
 
 	query := fmt.Sprintf(`
 		INSERT INTO %s (
-			id, timestamp, method, path, query, request_headers, response_headers,
+			id, timestamp, method, host, path, raw_path, query, request_headers, response_headers,
 			status_code, duration, request_body, response_body, error,
 			middleware_trace, route_trace, extras
-		) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17::jsonb)
 	`, s.tableName)
 
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		query,
 		reqLog.ID,
 		reqLog.Timestamp,
 		reqLog.Method,
+		reqLog.Host,
 		reqLog.Path,
+		reqLog.RawPath,
 		reqLog.Query,
 		reqHeaders,
 		respHeaders,
@@ -177,33 +206,34 @@ func (s *Store) Add(reqLog *store.RequestLog) error {
 		reqLog.Error,
 		middlewareTrace,
 		routeTrace,
-		encodeExtras(reqLog),
+		extras,
 	)
 	if err != nil {
 		return fmt.Errorf("postgres insert: %w", err)
 	}
 
 	if s.insertCount.Add(1)%cleanupEveryN == 0 {
-		s.cleanup()
+		if err := s.cleanup(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // prepareJSON ensures we have a valid JSON string
-func prepareJSON(v interface{}) string {
+func prepareJSON(v interface{}) (string, error) {
 	if v == nil {
-		return "{}"
+		return "{}", nil
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
-		log.Printf("govisual: failed to marshal JSON: %v", err)
-		return "{}"
+		return "", err
 	}
-	return string(data)
+	return string(data), nil
 }
 
 // cleanup removes old logs to maintain the capacity limit
-func (s *Store) cleanup() {
+func (s *Store) cleanup() error {
 	// One statement that keeps the newest rows; a separate COUNT would go
 	// stale under concurrent inserts and leave the table above capacity.
 	deleteQuery := fmt.Sprintf(`
@@ -216,15 +246,16 @@ func (s *Store) cleanup() {
 	`, s.tableName, s.tableName)
 
 	if _, err := s.db.Exec(deleteQuery, s.capacity); err != nil {
-		log.Printf("govisual: failed to clean up old logs: %v", err)
+		return fmt.Errorf("postgres cleanup: %w", err)
 	}
+	return nil
 }
 
 // Get retrieves a specific request log by its ID
 func (s *Store) Get(id string) (*store.RequestLog, bool) {
 	query := fmt.Sprintf(`
 		SELECT
-			id, timestamp, method, path, query,
+			id, timestamp, method, COALESCE(host, ''), path, COALESCE(raw_path, ''), query,
 			COALESCE(request_headers::text, '{}'),
 			COALESCE(response_headers::text, '{}'),
 			status_code, duration, request_body, response_body, error,
@@ -248,7 +279,9 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 		&reqLog.ID,
 		&reqLog.Timestamp,
 		&reqLog.Method,
+		&reqLog.Host,
 		&reqLog.Path,
+		&reqLog.RawPath,
 		&reqLog.Query,
 		&reqHeadersStr,
 		&respHeadersStr,
@@ -282,7 +315,7 @@ func (s *Store) Get(id string) (*store.RequestLog, bool) {
 func (s *Store) GetAll() []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
-			id, timestamp, method, path, query,
+			id, timestamp, method, COALESCE(host, ''), path, COALESCE(raw_path, ''), query,
 			COALESCE(request_headers::text, '{}'),
 			COALESCE(response_headers::text, '{}'),
 			status_code, duration, request_body, response_body, error,
@@ -300,7 +333,7 @@ func (s *Store) GetAll() []*store.RequestLog {
 func (s *Store) GetLatest(n int) []*store.RequestLog {
 	query := fmt.Sprintf(`
 		SELECT
-			id, timestamp, method, path, query,
+			id, timestamp, method, COALESCE(host, ''), path, COALESCE(raw_path, ''), query,
 			COALESCE(request_headers::text, '{}'),
 			COALESCE(response_headers::text, '{}'),
 			status_code, duration, request_body, response_body, error,
@@ -339,7 +372,9 @@ func (s *Store) queryLogs(query string, args ...interface{}) []*store.RequestLog
 			&reqLog.ID,
 			&reqLog.Timestamp,
 			&reqLog.Method,
+			&reqLog.Host,
 			&reqLog.Path,
+			&reqLog.RawPath,
 			&reqLog.Query,
 			&reqHeadersStr,
 			&respHeadersStr,
