@@ -85,12 +85,14 @@ func (s *Store) Add(reqLog *store.RequestLog) error {
 	}
 
 	if s.insertCount.Add(1)%cleanupEveryN == 0 {
-		s.cleanup()
+		if err := s.cleanup(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func (s *Store) cleanup() {
+func (s *Store) cleanup() error {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 
@@ -98,11 +100,10 @@ func (s *Store) cleanup() {
 	// ZCARD would go stale under concurrent inserts.
 	oldestIDs, err := s.client.ZRange(ctx, s.keyPrefix+"logs", 0, int64(-(s.capacity + 1))).Result()
 	if err != nil {
-		log.Printf("govisual: failed to get oldest Redis log IDs: %v", err)
-		return
+		return fmt.Errorf("redis cleanup index: %w", err)
 	}
 	if len(oldestIDs) == 0 {
-		return
+		return nil
 	}
 
 	pipe := s.client.Pipeline()
@@ -116,8 +117,9 @@ func (s *Store) cleanup() {
 		pipe.Del(ctx, s.keyPrefix+id)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
-		log.Printf("govisual: failed to clean up old Redis logs: %v", err)
+		return fmt.Errorf("redis cleanup entries: %w", err)
 	}
+	return nil
 }
 
 func (s *Store) Get(id string) (*store.RequestLog, bool) {

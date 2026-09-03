@@ -4,7 +4,7 @@ This guide covers installing GoVisual for your Go web applications.
 
 ## Requirements
 
-- Go 1.24 or higher
+- Go 1.24 or higher for core, MCP, and storage modules; the optional telemetry module requires Go 1.25
 - (Optional) a database for persistent storage — each backend is its own module under `store/`
 - (Optional) an OpenTelemetry collector, via the `telemetry` module
 

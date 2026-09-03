@@ -17,6 +17,11 @@ import (
 // constant-time when comparing secrets.
 type DashboardAuth func(r *http.Request) bool
 
+// ErrorHandler receives capture/storage errors synchronously after the wrapped
+// handler returns. It should return promptly. Panics are recovered and logged
+// so observability failures never replace the application's result.
+type ErrorHandler func(error)
+
 type Config struct {
 	MaxRequests int
 
@@ -47,6 +52,9 @@ type Config struct {
 	// tool calls appear here.
 	ActivityLog *store.ActivityLog
 
+	// ErrorHandler receives storage errors. Nil uses log.Printf.
+	ErrorHandler ErrorHandler
+
 	// Performance Profiling configuration
 	EnableProfiling bool
 
@@ -67,11 +75,15 @@ type Config struct {
 	// 0.0.0.0, the dashboard stays local unless WithAllowRemote is used.
 	LocalhostOnly bool
 
-	// EnableReplay enables the POST /__viz/api/replay endpoint, which lets the
-	// dashboard fire arbitrary HTTP requests from the server. Disabled by
-	// default because it is a powerful SSRF primitive if the dashboard is
-	// reachable by an attacker.
+	// EnableReplay enables the POST /__viz/api/replay endpoint. Replays target
+	// only ReplayBaseURL or a validated loopback dashboard origin. It remains
+	// disabled by default because replay can repeat captured side effects.
 	EnableReplay bool
+
+	// ReplayBaseURL pins dashboard replays to a configured application origin.
+	// It is required when LocalhostOnly is false. A localhost-only dashboard
+	// may leave it empty to target its own validated localhost origin.
+	ReplayBaseURL string
 
 	// ExposeSystemInfo controls whether the GET /__viz/api/system-info endpoint
 	// is enabled. Disabled by default; enabling exposes runtime info (hostname,
@@ -174,6 +186,15 @@ func WithActivityLog(a *store.ActivityLog) Option {
 	}
 }
 
+// WithErrorHandler receives request-capture persistence errors synchronously.
+// The callback should return promptly; its panics are recovered and logged.
+// Govisual does not turn these errors into application failures.
+func WithErrorHandler(fn func(error)) Option {
+	return func(c *Config) {
+		c.ErrorHandler = fn
+	}
+}
+
 // ShouldIgnorePath checks if a path should be ignored based on the configured patterns.
 func (c *Config) ShouldIgnorePath(path string) bool {
 	// The dashboard itself must always be ignored, otherwise opening it
@@ -259,9 +280,10 @@ func WithLocalhostOnly() Option {
 	}
 }
 
-// WithAllowRemote lets non-loopback addresses reach the dashboard. Pair it
-// with WithBasicAuth or WithDashboardAuth — an open dashboard exposes every
-// captured request and response body to whoever can reach the port.
+// WithAllowRemote lets non-loopback addresses reach the dashboard. Always pair
+// it with WithBasicAuth or WithDashboardAuth; an open dashboard exposes every
+// captured request and response body to whoever can reach the port. Dashboard
+// replay also requires WithReplayBaseURL when remote access is enabled.
 func WithAllowRemote() Option {
 	return func(c *Config) {
 		c.LocalhostOnly = false
@@ -275,6 +297,16 @@ func WithAllowRemote() Option {
 func WithReplayEnabled(enabled bool) Option {
 	return func(c *Config) {
 		c.EnableReplay = enabled
+	}
+}
+
+// WithReplayBaseURL pins dashboard replays to the supplied application base
+// URL. It is required with WithAllowRemote and is also useful behind a reverse
+// proxy where the browser-facing dashboard origin is not directly reachable
+// from the application process.
+func WithReplayBaseURL(baseURL string) Option {
+	return func(c *Config) {
+		c.ReplayBaseURL = strings.TrimSuffix(baseURL, "/")
 	}
 }
 
@@ -308,14 +340,14 @@ func WithShutdownContext(ctx context.Context) Option {
 // defaultConfig returns the default configuration
 func defaultConfig() *Config {
 	return &Config{
-		MaxRequests:       100,
-		DashboardPath:     "/__viz",
-		LogRequestBody:    false,
-		LogResponseBody:   false,
-		MaxBodyBytes:      0, // 0 => use middleware.DefaultMaxBodyBytes
+		MaxRequests:     100,
+		DashboardPath:   "/__viz",
+		LogRequestBody:  false,
+		LogResponseBody: false,
+		MaxBodyBytes:    0, // 0 => use middleware.DefaultMaxBodyBytes
 		// Browser probes that would otherwise clutter every capture; users
 		// can extend this list via WithIgnorePaths.
-		IgnorePaths: []string{"/favicon.ico"},
+		IgnorePaths:       []string{"/favicon.ico"},
 		SampleRate:        1,
 		EnableProfiling:   false,
 		ProfileType:       profiling.ProfileAll,

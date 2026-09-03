@@ -8,7 +8,7 @@ require (
 	github.com/doganarif/govisual/store/redis v0.0.0-00010101000000-000000000000
 	github.com/doganarif/govisual/store/sqlite v0.0.0-00010101000000-000000000000
 	github.com/doganarif/govisual/telemetry v0.0.0-00010101000000-000000000000
-	github.com/doganarif/govisual/v2 v2.0.0
+	github.com/doganarif/govisual/v2 v2.0.1
 	github.com/mattn/go-sqlite3 v1.14.47
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0

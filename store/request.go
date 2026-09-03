@@ -13,6 +13,7 @@ type RequestLog struct {
 	Method             string                   `json:"Method" bson:"method"`
 	Host               string                   `json:"Host,omitempty" bson:"host,omitempty"`
 	Path               string                   `json:"Path" bson:"path"`
+	RawPath            string                   `json:"RawPath,omitempty" bson:"raw_path,omitempty"`
 	Query              string                   `json:"Query" bson:"query"`
 	RequestHeaders     http.Header              `json:"RequestHeaders" bson:"request_headers"`
 	ResponseHeaders    http.Header              `json:"ResponseHeaders" bson:"response_headers"`
@@ -92,9 +93,18 @@ func NewRequestLog(req *http.Request) *RequestLog {
 		Method:         req.Method,
 		Host:           req.Host,
 		Path:           req.URL.Path,
+		RawPath:        req.URL.RawPath,
 		Query:          req.URL.RawQuery,
 		RequestHeaders: scrubHeaders(req.Header),
 	}
+}
+
+// SetResponseHeaders records a defensive, credential-scrubbed copy of the
+// response headers. Keeping the sanitization in store ensures request and
+// response headers follow the same policy before a RequestLog can be
+// persisted by any backend.
+func (l *RequestLog) SetResponseHeaders(headers http.Header) {
+	l.ResponseHeaders = scrubHeaders(headers)
 }
 
 // sensitiveHeaders are dropped from captured request/response logs. Storing
@@ -115,8 +125,8 @@ var sensitiveHeaders = map[string]struct{}{
 // replaced by a fixed marker. The header *name* is kept so consumers can see
 // that auth was present; only the value is hidden.
 func scrubHeaders(h http.Header) http.Header {
-	if len(h) == 0 {
-		return h
+	if h == nil {
+		return nil
 	}
 	out := make(http.Header, len(h))
 	for k, vs := range h {

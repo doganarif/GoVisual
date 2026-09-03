@@ -100,7 +100,7 @@ claude mcp add govisual --transport http http://localhost:8080/mcp
 
 **Tools:** `get_last_error`, `list_requests`, `get_request`, `search_requests`, `get_stats`, `get_debug_context`, `replay_request`, `diff_replay`, `await_request`, `save_as_test`, `copy_as_curl`, `clear_requests`.
 
-Responses are token-aware: bounded list sizes, capped body excerpts, sizes reported so the agent knows when to ask for more. The endpoint is loopback-only by default. Replays are pinned to the base URL you configured, so an agent cannot use it to reach arbitrary hosts.
+Responses are token-aware: bounded lists and diagnostics, capped body excerpts, and sizes reported so the agent knows when to ask for more. The endpoint is loopback-only by default. Replay, diff, and generated curl commands require and are pinned to `WithBaseURL(...)`.
 
 Full guide: [docs/claude-code.md](docs/claude-code.md).
 
@@ -165,7 +165,7 @@ The event appears on the request's Logs tab and (with profiling on) inside the m
 `http://localhost:8080/__viz` by default. Customize with `WithDashboardPath("/__debug")`.
 
 - **Inbox, Errors, Slow**: filter captured requests by status and duration.
-- **Request drawer** per request: Overview, Headers, Body, Trace (middleware, SQL, outbound HTTP), Logs, Performance (CPU, memory, GC, flame graph when profiling is on).
+- **Request drawer** per request: Overview, Headers, Body, Trace (middleware, SQL, outbound HTTP), Logs, Performance (allocations, process heap, goroutines, GC, and a flame graph when profiling is on).
 - **Analytics**: per-route request counts, p50/p95, error rates.
 - **Agents**: recent MCP tool calls with their arguments, so you can watch a coding agent debug the app in real time.
 - **Environment**: Go version, GOOS/GOARCH, memory stats, allowlisted env vars.
@@ -253,11 +253,13 @@ handler := govisual.Wrap(
 
 	// Storage (in-memory by default)
 	govisual.WithStore(myStore),
+	govisual.WithErrorHandler(func(err error) { logger.Error("capture failed", "error", err) }),
 
 	// Dashboard security
 	govisual.WithAllowRemote(),                 // loopback-only by default
 	govisual.WithBasicAuth("admin", "s3cret"),
-	govisual.WithReplayEnabled(true),           // opt-in, SSRF-checked
+	govisual.WithReplayEnabled(true),           // opt-in; destination is pinned
+	govisual.WithReplayBaseURL("http://127.0.0.1:8080"), // required with WithAllowRemote
 	govisual.WithSystemInfo("GOPATH", "HOME"),  // env vars require an explicit allowlist
 
 	// Profiling (feeds the Performance tab and the bottleneck analyzer)
@@ -278,8 +280,8 @@ Full option reference: [docs/api-reference.md](docs/api-reference.md). Longer co
 
 The dashboard sees every captured request and response, so v2 defaults are conservative:
 
-- **Loopback-only** unless `WithAllowRemote()`. Pair remote access with auth.
-- **Request replay** is off unless `WithReplayEnabled(true)`. Enabling it opens `POST /__viz/api/replay`, which makes the server issue an outbound request. Targets that resolve to private IPs are rejected before the call.
+- **Loopback-only** unless `WithAllowRemote()`. Never expose a remote dashboard without `WithBasicAuth`, `WithDashboardAuth`, or equivalent authentication in an outer handler.
+- **Request replay** is off unless `WithReplayEnabled(true)`. Replays load a captured request by ID and are pinned to `WithReplayBaseURL(...)`, or to a validated loopback dashboard origin when no base URL is configured. `WithAllowRemote()` requires an explicit replay base URL. Clients may edit the method, path, headers, and body, but cannot choose another destination host.
 - **System info** is off unless `WithSystemInfo(...)`. Environment variables are only exposed if you list them by name.
 - **Basic auth** via `WithBasicAuth(user, pass)`, or a custom check via `WithDashboardAuth(func(*http.Request) bool)`.
 - **Sensitive headers** (Authorization, Cookie, Set-Cookie, X-Api-Key, X-Auth-Token, X-Csrf-Token) are redacted at capture time. The header name is kept, the value is replaced.

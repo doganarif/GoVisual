@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@types/d3": "^7.4.3",
-    "esbuild": "^0.19.11",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3"
   }

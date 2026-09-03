@@ -29,7 +29,6 @@ Thumbs.db
 
 # Node.js dependencies
 node_modules/
-package-lock.json
 
 # Built frontend files (these are committed for Go embed)
 # internal/dashboard/static/dashboard.js

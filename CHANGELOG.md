@@ -2,6 +2,35 @@
 
 All notable changes to GoVisual are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.0.1] - 2026-09-03
+
+This patch release hardens the capture-to-replay workflow and fixes several cases where observability could change application behavior or present misleading data.
+
+### Security
+
+- Dashboard and MCP endpoints now reject untrusted Host values and cross-origin browser requests, and dashboard SSE no longer opts into wildcard CORS.
+- Dashboard replay loads a stored request by ID and pins the destination to `WithReplayBaseURL(...)` or a validated loopback dashboard origin. Remote dashboards require an explicit replay base URL.
+- MCP replay and generated curl commands now require and use `WithBaseURL(...)`; captured Host values are never used as destinations. Existing MCP replay setups that relied on captured Host must configure `WithBaseURL(...)`.
+- Replay strips Host, content length, hop-by-hop headers, connection-nominated headers, and stored redaction placeholders. Redirect following remains disabled.
+
+### Fixed
+
+- Capped request-body capture no longer replaces the application's body with the truncated copy. The handler receives the complete original stream, including read failures and close behavior.
+- Response headers are captured at commit time and credential-bearing values are redacted before storage.
+- `RequestLog.RawPath` preserves encoded path semantics during replay; PostgreSQL and SQLite persist both it and `Host` while migrating existing tables safely.
+- SQL instrumentation preserves optional `database/sql/driver` interfaces used for context-aware connections, health checks, session reset, validation, named values, and column conversion.
+- Store write failures are logged by default and can be routed through `WithErrorHandler(...)` without failing the application request.
+- `ResponseWriter.Unwrap()` now works with `http.ResponseController` and compatible middleware.
+- Dashboard Errors includes captured errors and panics, live updates no longer race the initial fetch, comparisons retain requested order, and duration units render correctly.
+- Profiling now reports allocation and GC deltas for the request window while identifying process-wide heap and goroutine gauges accurately. Existing persisted v2.0.0 records retain their original cumulative GC values.
+- MCP outputs have hard ceilings, replay reports omitted redacted headers, `diff_replay` accepts credential/body overrides and compares the full bounded replay body, and `save_as_test` accepts an optional `expected_status`.
+- Generated curl commands quote custom methods, disable curl's `@file` body expansion, use only safe destinations, and reject incomplete or oversized captured bodies.
+
+### Developer experience
+
+- The dashboard dependency lockfile is committed, and the development build moves to a patched esbuild release. CI now installs the locked graph, type-checks and rebuilds the UI, verifies generated assets, and tests modules against their declared Go versions.
+- Dashboard, configuration, API, request-logging, and contributor documentation now match the v2 runtime behavior.
+
 ## [v2.0.0] - 2026-07-02
 
 The 2.0 release turns GoVisual into a runtime debugger a coding agent can drive, keeps the core module dependency-free, and hardens every prior rough edge with a full test suite.

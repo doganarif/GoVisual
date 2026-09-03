@@ -2,9 +2,12 @@ package govisual
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/doganarif/govisual/v2/internal/dashboard"
@@ -47,16 +50,18 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 
 	var wrapped http.Handler
 	if profiler != nil {
-		wrapped = middleware.WrapWithProfilingAndLimits(
+		wrapped = middleware.WrapWithProfilingLimitsAndErrorHandler(
 			handler, requestStore,
 			config.LogRequestBody, config.LogResponseBody,
 			config, profiler, config.effectiveMaxBody(), config.SampleRate,
+			func(err error) { config.handleError(err) },
 		)
 	} else {
-		wrapped = middleware.WrapWithLimits(
+		wrapped = middleware.WrapWithLimitsAndErrorHandler(
 			handler, requestStore,
 			config.LogRequestBody, config.LogResponseBody,
 			config, config.effectiveMaxBody(), config.SampleRate,
+			func(err error) { config.handleError(err) },
 		)
 	}
 
@@ -75,23 +80,28 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 	}
 
 	dashHandler := dashboard.NewHandler(requestStore, profiler, dashboard.HandlerOptions{
-		EnableReplay:     config.EnableReplay,
-		ExposeSystemInfo: config.ExposeSystemInfo,
-		ExposeEnvVars:    config.ExposeEnvVars,
-		ActivityLog:      config.ActivityLog,
+		EnableReplay:         config.EnableReplay,
+		ReplayBaseURL:        config.ReplayBaseURL,
+		AllowLocalhostReplay: config.LocalhostOnly,
+		ExposeSystemInfo:     config.ExposeSystemInfo,
+		ExposeEnvVars:        config.ExposeEnvVars,
+		ActivityLog:          config.ActivityLog,
 	})
 
-	guardedDash := guardDashboard(dashHandler, config)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	dashboardRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == config.DashboardPath {
-			// The dashboard uses relative URLs, which only resolve under
-			// the trailing-slash form of the mount path.
+			// The dashboard uses relative URLs, which only resolve under the
+			// trailing-slash form of the mount path.
 			http.Redirect(w, r, config.DashboardPath+"/", http.StatusMovedPermanently)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, config.DashboardPath+"/") {
-			http.StripPrefix(config.DashboardPath, guardedDash).ServeHTTP(w, r)
+		http.StripPrefix(config.DashboardPath, dashHandler).ServeHTTP(w, r)
+	})
+	guardedDash := guardDashboard(dashboardRoutes, config)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == config.DashboardPath || strings.HasPrefix(r.URL.Path, config.DashboardPath+"/") {
+			guardedDash.ServeHTTP(w, r)
 			return
 		}
 		wrapped.ServeHTTP(w, r)
@@ -102,7 +112,19 @@ func Wrap(handler http.Handler, opts ...Option) http.Handler {
 // authentication checks per the configuration.
 func guardDashboard(h http.Handler, config *Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if config.LocalhostOnly && !isLoopback(r) {
+		requestScheme := "http"
+		if r.TLS != nil {
+			requestScheme = "https"
+		}
+		if _, _, err := canonicalAuthority(r.Host, requestScheme); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if config.LocalhostOnly && (!isLoopback(r) || !isLocalAuthority(r.Host)) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if !hasSameOrigin(r, !config.LocalhostOnly) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -117,6 +139,14 @@ func guardDashboard(h http.Handler, config *Config) http.Handler {
 	})
 }
 
+func (c *Config) handleError(err error) {
+	if c.ErrorHandler != nil {
+		c.ErrorHandler(err)
+		return
+	}
+	log.Printf("%v", err)
+}
+
 // isLoopback reports whether the request's remote address is a loopback IP.
 func isLoopback(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -128,6 +158,99 @@ func isLoopback(r *http.Request) bool {
 		return false
 	}
 	return ip.IsLoopback()
+}
+
+func isLocalAuthority(authority string) bool {
+	host, _, err := canonicalAuthority(authority, "http")
+	if err != nil {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			ip = ip4
+		}
+		return ip.IsLoopback()
+	}
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
+}
+
+// hasSameOrigin rejects browser requests whose Origin does not exactly match
+// the request scheme and Host. Non-browser clients commonly omit Origin and
+// are governed by the loopback/authentication checks instead.
+func hasSameOrigin(r *http.Request, allowTLSProxy bool) bool {
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
+		return true
+	}
+	if len(origins) != 1 {
+		return false
+	}
+
+	u, err := url.Parse(origins[0])
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return false
+	}
+	originScheme := strings.ToLower(u.Scheme)
+	if originScheme != "http" && originScheme != "https" {
+		return false
+	}
+	requestScheme := "http"
+	if r.TLS != nil {
+		requestScheme = "https"
+	}
+	if originScheme != requestScheme {
+		// WithAllowRemote is commonly used behind a TLS-terminating reverse
+		// proxy, where Go sees HTTP even though the browser origin is HTTPS.
+		// Accept that one transition without trusting spoofable forwarded
+		// headers; the public Host and effective port must still match below.
+		if !allowTLSProxy || requestScheme != "http" || originScheme != "https" {
+			return false
+		}
+		requestScheme = originScheme
+	}
+
+	originHost, originPort, err := canonicalAuthority(u.Host, originScheme)
+	if err != nil {
+		return false
+	}
+	requestHost, requestPort, err := canonicalAuthority(r.Host, requestScheme)
+	if err != nil {
+		return false
+	}
+	return originHost == requestHost && originPort == requestPort
+}
+
+func canonicalAuthority(authority, scheme string) (string, string, error) {
+	authority = strings.TrimSpace(authority)
+	if authority == "" {
+		return "", "", fmt.Errorf("empty host")
+	}
+	u, err := url.Parse(scheme + "://" + authority)
+	if err != nil || u.User != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", fmt.Errorf("invalid host")
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if host == "" {
+		return "", "", fmt.Errorf("empty host")
+	}
+	port := u.Port()
+	if port == "" {
+		if scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	} else {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return "", "", fmt.Errorf("invalid port")
+		}
+		port = strconv.Itoa(n)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	return host, port, nil
 }
 
 // effectiveMaxBody resolves the configured MaxBodyBytes against the package

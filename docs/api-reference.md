@@ -157,6 +157,24 @@ govisual.WithStore(pg)
 
 ---
 
+### `WithErrorHandler`
+
+```go
+func WithErrorHandler(fn func(error)) Option
+```
+
+Receives request-capture persistence errors synchronously after the wrapped handler returns. The callback should return promptly; its panics are recovered and logged so they cannot replace the application result. When omitted, GoVisual logs storage errors through the standard library logger.
+
+**Example:**
+
+```go
+govisual.WithErrorHandler(func(err error) {
+	logger.Error("govisual capture failed", "error", err)
+})
+```
+
+---
+
 ### `WithShutdownContext`
 
 ```go
@@ -254,12 +272,28 @@ govisual.WithDashboardAuth(func(r *http.Request) bool {
 func WithReplayEnabled(enabled bool) Option
 ```
 
-Enables the dashboard's `/api/replay` endpoint. Disabled by default because the endpoint lets the server make arbitrary outbound HTTP requests (an SSRF primitive). Only enable it behind authentication and/or loopback-only access.
+Enables the dashboard's `/api/replay` endpoint. Disabled by default. Replay loads a captured request by ID and sends it only to the configured replay base URL or, for a loopback-only dashboard, the validated dashboard origin. `WithAllowRemote()` requires an explicit replay base URL. Only enable replay behind authentication and/or loopback-only access.
 
 **Example:**
 
 ```go
 govisual.WithReplayEnabled(true)
+```
+
+---
+
+### `WithReplayBaseURL`
+
+```go
+func WithReplayBaseURL(baseURL string) Option
+```
+
+Pins request replay to a server-configured HTTP or HTTPS origin. It is required with `WithAllowRemote()` and is also useful when the application is behind a reverse proxy or the browser-facing dashboard origin is not reachable from the application process. Dashboard clients cannot override this authority.
+
+**Example:**
+
+```go
+govisual.WithReplayBaseURL("http://127.0.0.1:8080")
 ```
 
 ---
@@ -288,7 +322,7 @@ govisual.WithSystemInfo("GOPATH", "GOOS")
 func WithProfiling(enabled bool) Option
 ```
 
-Enables per-request performance profiling. When enabled, each request captures CPU time, memory allocations, goroutine counts, SQL queries (via `WrapDriver`), and outbound HTTP calls (via `WrapTransport`).
+Enables per-request performance profiling. Requests that meet `WithProfileThreshold` retain metrics for the selected profile types, including allocation and GC deltas for the profiling window, process heap and goroutine gauges, SQL queries (via `WrapDriver`), and outbound HTTP calls (via `WrapTransport`).
 
 **Example:**
 

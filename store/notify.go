@@ -2,7 +2,9 @@ package store
 
 import "sync"
 
-// NotifyingStore wraps a Store so every successful Add signals subscribers.
+// NotifyingStore wraps a Store so every completed Add signals subscribers.
+// An Add can persist a row and still return a later cleanup error, so the
+// signal means the store may have changed rather than that Add returned nil.
 // The dashboard uses it to push live updates instead of polling; anything
 // that wants to react to new requests can Subscribe.
 type NotifyingStore struct {
@@ -20,9 +22,7 @@ func WithNotify(s Store) *NotifyingStore {
 }
 
 func (n *NotifyingStore) Add(l *RequestLog) error {
-	if err := n.Store.Add(l); err != nil {
-		return err
-	}
+	err := n.Store.Add(l)
 	n.mu.Lock()
 	for ch := range n.subs {
 		// Non-blocking: the buffered channel coalesces bursts, a slow
@@ -33,7 +33,7 @@ func (n *NotifyingStore) Add(l *RequestLog) error {
 		}
 	}
 	n.mu.Unlock()
-	return nil
+	return err
 }
 
 // Subscribe returns a channel that receives a signal after each Add, and a

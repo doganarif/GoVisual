@@ -100,18 +100,20 @@ export function PerformanceProfiler({
         </DialogHeader>
 
         {/* Metrics Summary Cards */}
-        <div className="grid grid-cols-4 gap-4 mt-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-4">
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-muted-foreground">CPU Time</div>
+              <div className="text-sm text-muted-foreground">
+                Allocated during window
+              </div>
               <div className="text-2xl font-bold">
-                {formatDuration(metrics.cpu_time)}
+                {formatBytes(metrics.memory_total_alloc)}
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-muted-foreground">Memory</div>
+              <div className="text-sm text-muted-foreground">Process heap</div>
               <div className="text-2xl font-bold">
                 {formatBytes(metrics.memory_alloc)}
               </div>
@@ -119,15 +121,29 @@ export function PerformanceProfiler({
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-muted-foreground">Goroutines</div>
+              <div className="text-sm text-muted-foreground">
+                Process goroutines
+              </div>
               <div className="text-2xl font-bold">
-                {metrics.num_goroutines || 0}
+                {metrics.num_goroutines ?? 0}
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4">
-              <div className="text-sm text-muted-foreground">GC Pauses</div>
+              <div className="text-sm text-muted-foreground">
+                GC runs
+              </div>
+              <div className="text-2xl font-bold">
+                {metrics.num_gc ?? 0}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="text-sm text-muted-foreground">
+                GC pause
+              </div>
               <div className="text-2xl font-bold">
                 {formatDuration(metrics.gc_pause_total)}
               </div>
@@ -138,7 +154,7 @@ export function PerformanceProfiler({
         <Tabs
           defaultValue="bottlenecks"
           className="mt-6"
-          onValueChange={(value) => {
+          onValueChange={(value: string) => {
             if (value === "flamegraph") {
               loadFlameGraph();
             }

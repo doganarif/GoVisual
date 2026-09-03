@@ -1,108 +1,111 @@
 # GoVisual Dashboard
 
-The GoVisual dashboard provides a real-time view of HTTP requests flowing through your application.
+The embedded dashboard is a live view of requests captured by GoVisual v2. It is served by the same handler as your application and does not require a separate process.
 
 ![GoVisual Dashboard](dashboard.png)
 
-## Accessing the Dashboard
+## Open the dashboard
 
-By default, the dashboard is available at `http://localhost:<your-port>/__viz`. You can customize this path using the `WithDashboardPath` option:
+The default URL is `http://localhost:<port>/__viz`. To mount it elsewhere:
 
 ```go
 handler := govisual.Wrap(
-    mux,
-    govisual.WithDashboardPath("/__debug"),
+	mux,
+	govisual.WithDashboardPath("/__debug"),
 )
 ```
 
-## Dashboard Features
+Dashboard traffic is loopback-only by default. If you allow remote access, protect it with authentication because captured headers and bodies may contain application data:
 
-### Request Table
+```go
+handler := govisual.Wrap(
+	mux,
+	govisual.WithAllowRemote(),
+	govisual.WithBasicAuth("admin", os.Getenv("DASHBOARD_PASSWORD")),
+)
+```
 
-The main view displays a table of recent HTTP requests with the following information:
+## Views
 
-- **Method**: HTTP method (GET, POST, PUT, etc.)
-- **Path**: The request URL path
-- **Status**: HTTP status code (color-coded)
-- **Time**: Response time in milliseconds
-- **Timestamp**: When the request was received
+- **Inbox** shows all captured requests.
+- **Errors** includes HTTP 4xx/5xx responses, requests with a recorded `Error`, and captured panics.
+- **Slow** shows requests that took at least 200ms.
+- **Analytics** summarizes throughput, response classes, latency, and endpoints. JSON/CSV export, client-local JSON import, and clearing the store are available here. Imported rows are temporary UI state and are replaced by the next authoritative live snapshot or reload.
+- **Agents** shows recent MCP activity when the same `*store.ActivityLog` is passed to GoVisual and the MCP module.
+- **Environment** shows runtime information only when `WithSystemInfo(...)` is enabled. Environment variables are limited to the names you explicitly allowlist.
 
-The table automatically updates as new requests come in.
+Use the path search and 2xx/3xx/4xx/5xx chips to narrow the request list. New requests arrive over Server-Sent Events, so the list updates without polling or reloading.
 
-### Request Details
+## Request details
 
-Clicking on a request in the table reveals detailed information:
+Select a request to inspect:
 
-#### Request Tab
+- **Overview**: method, path, status, duration, query, captured error, and panic stack.
+- **Headers**: captured request and response headers. Credential-bearing values are redacted at capture time.
+- **Body**: request and response bodies when body logging is enabled.
+- **Trace**: middleware entries plus instrumented SQL queries and outbound HTTP calls.
+- **Logs**: `slog` records and custom events attached to the request context.
+- **Performance**: allocation, process, GC, bottleneck, and flame-graph data when profiling is enabled.
 
-- Full URL (including query parameters)
-- HTTP method
-- Headers
-- Request body (if enabled)
-- Cookies
+Select two or more requests with **Compare** to compare their metadata, bodies, headers, and performance data in selection order.
 
-#### Response Tab
+## Optional data sources
 
-- Status code
-- Headers
-- Response body (if enabled)
-- Content type
-- Response size
+Body capture is off by default:
 
-#### Timing Tab
+```go
+handler := govisual.Wrap(
+	mux,
+	govisual.WithRequestBodyLogging(true),
+	govisual.WithResponseBodyLogging(true),
+)
+```
 
-- Total response time
-- Time spent in each middleware
-- Network latency
+Profiling powers SQL, outbound HTTP, bottleneck, and performance panels:
 
-#### Middleware Trace Tab
+```go
+handler := govisual.Wrap(mux, govisual.WithProfiling(true))
+```
 
-- Visual representation of middleware execution
-- Time spent in each middleware
-- Call hierarchy
+Application logs appear when they use a request context and a wrapped handler:
 
-### Filtering and Searching
+```go
+logger := slog.New(govisual.SlogHandler(slog.NewJSONHandler(os.Stdout, nil)))
+logger.InfoContext(r.Context(), "loaded account", "account_id", accountID)
+```
 
-The dashboard includes filtering capabilities:
+## Request replay
 
-- Filter by HTTP method (GET, POST, etc.)
-- Filter by status code or status code range (2xx, 4xx, etc.)
-- Search by URL path
-- Filter by time range
+Replay is disabled by default. Enable it only on a protected dashboard:
 
-### Dashboard Controls
+```go
+handler := govisual.Wrap(
+	mux,
+	govisual.WithBasicAuth("admin", os.Getenv("DASHBOARD_PASSWORD")),
+	govisual.WithReplayEnabled(true),
+	govisual.WithReplayBaseURL("http://127.0.0.1:8080"), // required with WithAllowRemote
+)
+```
 
-- **Clear All**: Remove all requests from the view
-- **Auto-refresh**: Toggle automatic updates
-- **Columns**: Show/hide specific columns
-- **Export**: Download request data as JSON
-
-## Browser Support
-
-The GoVisual dashboard is compatible with all modern browsers:
-
-- Chrome (recommended)
-- Firefox
-- Safari
-- Edge
+The replay endpoint loads the original request by ID. The dashboard can override its method, path, headers, and body, but cannot supply an arbitrary destination URL. The destination is `WithReplayBaseURL(...)` when configured, otherwise a loopback-only dashboard can use its validated origin. Remote dashboards must configure `WithReplayBaseURL(...)`. Replay paths must start with `/`; redirects, host overrides, hop-by-hop headers, content length, and stored redaction markers are not forwarded.
 
 ## Troubleshooting
 
-If you can't access the dashboard:
+If the dashboard does not load:
 
-1. Verify that the dashboard path is correct
-2. Check that your application is running
-3. Ensure no path conflict with your application's routes
-4. Check if any security middleware is blocking access
+1. Confirm the configured dashboard path.
+2. Remember that remote clients are rejected unless `WithAllowRemote()` is set.
+3. Check that an outer router or authentication middleware is not intercepting the dashboard path.
 
-If requests aren't showing up:
+If requests do not appear:
 
-1. Ensure the routes are passing through the GoVisual middleware
-2. Check if the routes are in the ignored paths list
-3. Make sure you're sending requests to the instrumented handler
+1. Confirm traffic passes through the handler returned by `govisual.Wrap`.
+2. Check `WithIgnorePaths(...)` and `WithSampleRate(...)`.
+3. Check the browser network panel for a connected `__viz/api/events` stream.
 
-## Related Documentation
+## Related documentation
 
-- [Configuration Options](configuration.md) - Configure dashboard behavior
-- [Request Logging](request-logging.md) - Control what gets logged
-- [Middleware Tracing](middleware-tracing.md) - How middleware tracing works
+- [Configuration options](configuration.md)
+- [Request logging](request-logging.md)
+- [Middleware tracing](middleware-tracing.md)
+- [Storage backends](storage-backends.md)

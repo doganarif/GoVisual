@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"database/sql"
@@ -25,6 +26,16 @@ func TestSQLiteStore(t *testing.T) {
 	}
 
 	storetest.Run(t, s)
+}
+
+func TestAddReturnsSerializationErrors(t *testing.T) {
+	s := &Store{}
+	err := s.Add(&store.RequestLog{
+		MiddlewareTrace: []map[string]interface{}{{"unsupported": make(chan int)}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "marshal middleware trace") {
+		t.Fatalf("Add error = %v, want middleware serialization error", err)
+	}
 }
 
 func TestSQLiteStoreCleanupKeepsNewest(t *testing.T) {

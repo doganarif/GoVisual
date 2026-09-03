@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestOpensAndUpgradesOldSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// Pre-v2 schema — no `extras` column.
+	// Pre-v2 schema with no `extras`, `host`, or `raw_path` column.
 	_, err = db.Exec(`CREATE TABLE logs (
 		id TEXT PRIMARY KEY,
 		timestamp DATETIME,
@@ -49,18 +50,56 @@ func TestOpensAndUpgradesOldSchema(t *testing.T) {
 	if !ok || got.Path != "/pre-v2" {
 		t.Fatalf("pre-v2 row missing after upgrade: %+v", got)
 	}
+	if got.Host != "" {
+		t.Fatalf("legacy row host = %q, want empty", got.Host)
+	}
+
+	for _, column := range []string{"extras", "host", "raw_path"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('logs') WHERE name = ?`, column).Scan(&count); err != nil {
+			t.Fatalf("inspect %s migration: %v", column, err)
+		}
+		if count != 1 {
+			t.Fatalf("expected one %s column after migration, got %d", column, count)
+		}
+	}
+
 	// A v2 row should now round trip.
-	s.Add(&store.RequestLog{
+	if err := s.Add(&store.RequestLog{
 		ID:         "new-1",
 		Timestamp:  time.Now(),
 		Method:     "GET",
+		Host:       "migrated.example.test:9443",
 		Path:       "/v2",
+		RawPath:    "/v%32",
 		StatusCode: 500,
 		PanicStack: "goroutine 1 [running]",
 		Logs:       []store.LogEntry{{Level: "ERROR", Message: "hi"}},
-	})
+	}); err != nil {
+		t.Fatalf("add row after migration: %v", err)
+	}
 	back, ok := s.Get("new-1")
-	if !ok || back.PanicStack == "" || len(back.Logs) != 1 {
+	if !ok || back.Host != "migrated.example.test:9443" || back.RawPath != "/v%32" || back.PanicStack == "" || len(back.Logs) != 1 {
 		t.Fatalf("v2 fields dropped on upgraded table: %+v", back)
+	}
+
+	// Cleanup must remain compatible with old tables that never had the
+	// created_at column used by early v2 schemas.
+	for i := 0; i < cleanupEveryN-1; i++ {
+		if err := s.Add(&store.RequestLog{
+			ID:        fmt.Sprintf("cleanup-%02d", i),
+			Timestamp: time.Now().Add(time.Duration(i) * time.Millisecond),
+			Method:    "GET",
+			Path:      "/cleanup",
+		}); err != nil {
+			t.Fatalf("add %d to upgraded schema: %v", i, err)
+		}
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM logs`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count > 10 {
+		t.Fatalf("cleanup retained %d rows, want at most 10", count)
 	}
 }

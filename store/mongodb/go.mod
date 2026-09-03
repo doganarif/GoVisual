@@ -3,7 +3,7 @@ module github.com/doganarif/govisual/store/mongodb
 go 1.24.0
 
 require (
-	github.com/doganarif/govisual/v2 v2.0.0
+	github.com/doganarif/govisual/v2 v2.0.1
 	go.mongodb.org/mongo-driver/v2 v2.7.0
 )
 

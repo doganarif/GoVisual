@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/doganarif/govisual/v2/store"
@@ -42,9 +43,9 @@ func recorded[Args any, Result any](
 	}
 }
 
-// summarizeArgs turns typed tool arguments into a compact string map for
-// display. Non-string values are JSON-encoded, long values truncated —
-// this feeds a UI list, not an audit log.
+// summarizeArgs turns typed tool arguments into a compact, redacted string map
+// for display. Request bodies are omitted and credential-shaped values are
+// redacted before any nested value is encoded.
 func summarizeArgs(v any) map[string]string {
 	if v == nil {
 		return nil
@@ -62,6 +63,7 @@ func summarizeArgs(v any) map[string]string {
 	}
 	out := make(map[string]string, len(raw))
 	for k, val := range raw {
+		val = sanitizeActivityArg(k, val)
 		s, ok := val.(string)
 		if !ok {
 			b, _ := json.Marshal(val)
@@ -73,4 +75,32 @@ func summarizeArgs(v any) map[string]string {
 		out[k] = s
 	}
 	return out
+}
+
+func sanitizeActivityArg(key string, value any) any {
+	normalized := strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(key))
+	if normalized == "body" || strings.HasSuffix(normalized, "body") {
+		return "[omitted]"
+	}
+	if strings.HasSuffix(normalized, "authorization") || normalized == "cookie" || normalized == "setcookie" ||
+		strings.Contains(normalized, "apikey") || strings.Contains(normalized, "password") ||
+		strings.Contains(normalized, "secret") || strings.Contains(normalized, "token") {
+		return "[redacted]"
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		clean := make(map[string]any, len(typed))
+		for nestedKey, nestedValue := range typed {
+			clean[nestedKey] = sanitizeActivityArg(nestedKey, nestedValue)
+		}
+		return clean
+	case []any:
+		clean := make([]any, len(typed))
+		for i, nestedValue := range typed {
+			clean[i] = sanitizeActivityArg(key, nestedValue)
+		}
+		return clean
+	default:
+		return value
+	}
 }

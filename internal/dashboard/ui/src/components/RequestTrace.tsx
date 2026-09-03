@@ -37,7 +37,11 @@ export function RequestTrace({ request }: RequestTraceProps) {
       type: trace.type || "middleware",
       start_time: trace.start_time || "",
       end_time: trace.end_time || "",
-      duration: trace.duration || 0,
+      // The persisted top-level trace map uses milliseconds for v2.0.0
+      // compatibility. Nested TraceEntry values below it are Go durations
+      // encoded as nanoseconds. Normalize the root once so rendering can use
+      // nanoseconds throughout this component.
+      duration: (Number(trace.duration) || 0) * 1_000_000,
       status: trace.status || "completed",
       error: trace.error,
       details: trace.details,
@@ -103,10 +107,12 @@ export function RequestTrace({ request }: RequestTraceProps) {
     }
   };
 
-  const formatDuration = (ms: number) => {
-    if (ms < 1) return "<1ms";
-    if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(2)}s`;
+  const formatDuration = (ns: number) => {
+    if (!ns) return "0ms";
+    const ms = ns / 1_000_000;
+    if (ms < 1) return `${Math.round(ns / 1_000)}μs`;
+    if (ms < 1_000) return `${ms.toFixed(2)}ms`;
+    return `${(ms / 1_000).toFixed(2)}s`;
   };
 
   const renderTraceNode = (trace: TraceEntry, depth = 0, nodeId = "0") => {
@@ -253,7 +259,7 @@ export function RequestTrace({ request }: RequestTraceProps) {
         {allEvents.map((event, idx) => {
           const leftPercent =
             ((event.startTime - minTime) / totalDuration) * 100;
-          const widthPercent = (event.duration / totalDuration) * 100;
+          const widthPercent = (event.duration / 1_000_000 / totalDuration) * 100;
 
           return (
             <div key={idx} className="relative h-8 mb-1">

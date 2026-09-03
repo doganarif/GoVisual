@@ -3,7 +3,7 @@ module github.com/doganarif/govisual/mcp
 go 1.24.0
 
 require (
-	github.com/doganarif/govisual/v2 v2.0.0
+	github.com/doganarif/govisual/v2 v2.0.1
 	github.com/modelcontextprotocol/go-sdk v1.0.0
 )
 
