@@ -135,7 +135,12 @@ client := &http.Client{Transport: govisual.WrapTransport(nil)}
 resp, err := client.Do(req.WithContext(r.Context()))
 ```
 
-To inspect outbound request and response bodies in **Trace → HTTP calls**,
+Expand a call in **Trace → HTTP calls** to inspect its request and response
+headers. Credential headers use the same redaction as inbound captures.
+Request headers reflect the values supplied to `WrapTransport`; headers added
+later by the underlying transport are not included.
+
+To also inspect outbound request and response bodies,
 opt in on the transport (profiling must also be enabled on `Wrap`):
 
 ```go
@@ -150,6 +155,8 @@ response before returning from the handler to retain the capture. Streaming
 responses are not eagerly consumed. The limit truncates only the recorded
 copy, and the dashboard labels truncated bodies. Body capture is off by
 default and may include sensitive application data when enabled.
+The detail viewer switches between request headers, response headers, request
+body, and response body, showing one scrollable panel at a time.
 
 ### Application logs (slog)
 

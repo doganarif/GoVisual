@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/list"
 	"context"
+	"net/http"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -80,6 +81,8 @@ type HTTPCallMetric struct {
 	Duration              time.Duration `json:"duration"`
 	Status                int           `json:"status"`
 	Size                  int64         `json:"size"`
+	RequestHeaders        http.Header   `json:"request_headers,omitempty"`
+	ResponseHeaders       http.Header   `json:"response_headers,omitempty"`
 	RequestBody           *string       `json:"request_body,omitempty"`
 	ResponseBody          *string       `json:"response_body,omitempty"`
 	RequestBodyTruncated  bool          `json:"request_body_truncated,omitempty"`
@@ -321,6 +324,10 @@ func (m *Metrics) snapshot() *Metrics {
 	}
 	c.SQLQueries = append([]SQLQueryMetric(nil), m.SQLQueries...)
 	c.HTTPCalls = append([]HTTPCallMetric(nil), m.HTTPCalls...)
+	for i := range c.HTTPCalls {
+		c.HTTPCalls[i].RequestHeaders = c.HTTPCalls[i].RequestHeaders.Clone()
+		c.HTTPCalls[i].ResponseHeaders = c.HTTPCalls[i].ResponseHeaders.Clone()
+	}
 	c.Bottlenecks = append([]Bottleneck(nil), m.Bottlenecks...)
 	return c
 }
@@ -355,6 +362,8 @@ func (m *Metrics) Model() *store.PerformanceMetrics {
 		out.SQLQueries = append(out.SQLQueries, store.SQLQuery(q))
 	}
 	for _, h := range m.HTTPCalls {
+		h.RequestHeaders = h.RequestHeaders.Clone()
+		h.ResponseHeaders = h.ResponseHeaders.Clone()
 		out.HTTPCalls = append(out.HTTPCalls, store.HTTPCall(h))
 	}
 	for _, b := range m.Bottlenecks {
@@ -489,6 +498,20 @@ func (r *HTTPCallRecorder) SetBody(request bool, body string, truncated bool) {
 		call.RequestBody, call.RequestBodyTruncated = &body, truncated
 	} else {
 		call.ResponseBody, call.ResponseBodyTruncated = &body, truncated
+	}
+}
+
+// SetHeaders records a defensive copy using the same credential redaction as
+// inbound captures. The headers passed to the underlying transport are untouched.
+func (r *HTTPCallRecorder) SetHeaders(request bool, headers http.Header) {
+	captured := store.ScrubHeaders(headers)
+	r.metrics.mu.Lock()
+	defer r.metrics.mu.Unlock()
+	call := &r.metrics.HTTPCalls[r.index]
+	if request {
+		call.RequestHeaders = captured
+	} else {
+		call.ResponseHeaders = captured
 	}
 }
 

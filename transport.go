@@ -19,6 +19,7 @@ import (
 // Attribution goes through the request context, so outbound requests must
 // carry it, and profiling must be enabled via WithProfiling(true). A nil rt
 // wraps http.DefaultTransport.
+// Request and response headers are captured with credential values redacted.
 // Body capture is opt-in via WithTransportBodyLogging and is bounded by
 // WithTransportMaxBodyBytes. Bodies are captured as they are read, without
 // eagerly consuming request streams or delaying response headers.
@@ -65,6 +66,9 @@ type vizTransport struct {
 func (t *vizTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	start := time.Now()
 	call := profiling.BeginHTTPCall(req.Context(), req.Method, req.URL.String())
+	if call != nil {
+		call.SetHeaders(true, req.Header)
+	}
 	var requestBody *transportBody
 	if t.logBodies && call != nil {
 		call.SetBody(true, "", false)
@@ -90,6 +94,9 @@ func (t *vizTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 	if call != nil {
+		if resp != nil {
+			call.SetHeaders(false, resp.Header)
+		}
 		call.Complete(duration, status, size)
 		// Preserve the bidirectional body returned for protocol upgrades.
 		if t.logBodies && resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {

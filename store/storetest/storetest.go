@@ -4,6 +4,8 @@
 package storetest
 
 import (
+	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -81,6 +83,8 @@ func Run(t *testing.T, s store.Store) {
 			HTTPCalls: []store.HTTPCall{{
 				Method: "POST", URL: "http://x", Duration: time.Millisecond, Status: 200,
 				RequestBody: &requestBody, ResponseBody: &responseBody,
+				RequestHeaders:       http.Header{"Accept": {"application/json"}},
+				ResponseHeaders:      http.Header{"X-Trace": {"first", "second"}},
 				RequestBodyTruncated: true, ResponseBodyTruncated: true,
 			}},
 		},
@@ -111,6 +115,10 @@ func Run(t *testing.T, s store.Store) {
 	}
 	if back.PerformanceMetrics != nil && len(back.PerformanceMetrics.HTTPCalls) == 1 {
 		call := back.PerformanceMetrics.HTTPCalls[0]
+		original := rich.PerformanceMetrics.HTTPCalls[0]
+		if !reflect.DeepEqual(call.RequestHeaders, original.RequestHeaders) || !reflect.DeepEqual(call.ResponseHeaders, original.ResponseHeaders) {
+			t.Errorf("outbound headers dropped by store round trip: %+v", call)
+		}
 		if call.RequestBody == nil || *call.RequestBody != requestBody ||
 			call.ResponseBody == nil || *call.ResponseBody != responseBody ||
 			!call.RequestBodyTruncated || !call.ResponseBodyTruncated {

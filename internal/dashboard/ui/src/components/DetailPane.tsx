@@ -1,5 +1,6 @@
 import { h, Fragment } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import * as Tabs from "@radix-ui/react-tabs";
 import {
   RequestLog,
   LogEntry,
@@ -488,20 +489,22 @@ function Headers({ request }: { request: RequestLog }) {
 function HeadersCard({
   title,
   headers,
+  compact = false,
 }: {
   title: string;
   headers?: Record<string, string[]>;
+  compact?: boolean;
 }) {
   const entries = Object.entries(headers || {});
   return (
-    <section class="border border-zinc-200 rounded-lg">
+    <section class="border border-zinc-200 rounded-lg text-zinc-900">
       <header class="px-4 py-2.5 border-b border-zinc-200">
         <h3 class="text-sm font-medium">{title}</h3>
       </header>
       {entries.length === 0 ? (
         <div class="px-4 py-3 text-xs text-zinc-500">No headers</div>
       ) : (
-        <div class="divide-y divide-zinc-100">
+        <div class={cn("divide-y divide-zinc-100", compact && "max-h-64 overflow-auto")}>
           {entries.map(([k, values]) => (
             <div key={k} class="grid grid-cols-[180px_1fr] gap-3 px-4 py-2 text-xs font-mono">
               <div class="text-zinc-500 truncate" title={k}>{k}</div>
@@ -523,7 +526,7 @@ function Body({ request }: { request: RequestLog }) {
   );
 }
 
-function BodyCard({ title, body, truncated }: { title: string; body?: string; truncated?: boolean }) {
+function BodyCard({ title, body, truncated, compact = false }: { title: string; body?: string; truncated?: boolean; compact?: boolean }) {
   return (
     <section class="border border-zinc-200 rounded-lg text-zinc-900">
       <header class="px-4 py-2.5 border-b border-zinc-200 flex items-center justify-between">
@@ -532,7 +535,7 @@ function BodyCard({ title, body, truncated }: { title: string; body?: string; tr
           {new TextEncoder().encode(body || "").length} bytes{truncated && " · truncated"}
         </span>
       </header>
-      <pre class="p-4 text-xs font-mono overflow-auto max-h-96 bg-zinc-50/50 rounded-b-lg whitespace-pre-wrap break-all">
+      <pre class={cn("p-4 text-xs font-mono overflow-auto bg-zinc-50/50 rounded-b-lg whitespace-pre-wrap break-all", compact ? "max-h-64" : "max-h-96")}>
         {formatBody(body)}
       </pre>
     </section>
@@ -540,7 +543,14 @@ function BodyCard({ title, body, truncated }: { title: string; body?: string; tr
 }
 
 function OutboundHTTPCall({ call }: { call: HTTPCall }) {
-  const hasBodies = call.request_body !== undefined || call.response_body !== undefined;
+  const panels = [
+    { id: "request-headers", label: "Request headers", available: call.request_headers !== undefined },
+    { id: "response-headers", label: "Response headers", available: call.response_headers !== undefined },
+    { id: "request-body", label: "Request body", available: call.request_body !== undefined },
+    { id: "response-body", label: "Response body", available: call.response_body !== undefined },
+  ].filter((panel) => panel.available);
+  const [selected, setSelected] = useState("");
+  const active = panels.some((panel) => panel.id === selected) ? selected : panels[0]?.id;
   const summary = (
     <Fragment>
       <span class="font-mono truncate min-w-0" title={call.url}>
@@ -552,7 +562,7 @@ function OutboundHTTPCall({ call }: { call: HTTPCall }) {
       </span>
     </Fragment>
   );
-  if (!hasBodies) {
+  if (panels.length === 0) {
     return <div class="px-4 py-2 text-xs flex items-center justify-between">{summary}</div>;
   }
   return (
@@ -563,14 +573,30 @@ function OutboundHTTPCall({ call }: { call: HTTPCall }) {
         </svg>
         {summary}
       </summary>
-      <div class="px-4 pb-4 pt-2 space-y-3">
+      <Tabs.Root value={active} onValueChange={setSelected} className="px-4 pb-4">
+        <Tabs.List aria-label="Outbound HTTP call details" className="flex overflow-x-auto border-b border-zinc-200 mb-3">
+          {panels.map((panel) => (
+            <Tabs.Trigger key={panel.id} value={panel.id} className={cn(
+              "px-3 py-2 text-xs whitespace-nowrap border-b-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:-outline-offset-2",
+              active === panel.id ? "border-zinc-900 text-zinc-900 font-medium" : "border-transparent text-zinc-500 hover:text-zinc-900",
+            )}>
+              {panel.label}
+            </Tabs.Trigger>
+          ))}
+        </Tabs.List>
+        {call.request_headers !== undefined && (
+          <Tabs.Content value="request-headers"><HeadersCard title="Request headers" headers={call.request_headers} compact /></Tabs.Content>
+        )}
+        {call.response_headers !== undefined && (
+          <Tabs.Content value="response-headers"><HeadersCard title="Response headers" headers={call.response_headers} compact /></Tabs.Content>
+        )}
         {call.request_body !== undefined && (
-          <BodyCard title="Request body" body={call.request_body} truncated={call.request_body_truncated} />
+          <Tabs.Content value="request-body"><BodyCard title="Request body" body={call.request_body} truncated={call.request_body_truncated} compact /></Tabs.Content>
         )}
         {call.response_body !== undefined && (
-          <BodyCard title="Response body" body={call.response_body} truncated={call.response_body_truncated} />
+          <Tabs.Content value="response-body"><BodyCard title="Response body" body={call.response_body} truncated={call.response_body_truncated} compact /></Tabs.Content>
         )}
-      </div>
+      </Tabs.Root>
     </details>
   );
 }
