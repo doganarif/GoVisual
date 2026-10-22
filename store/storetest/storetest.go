@@ -60,6 +60,7 @@ func Run(t *testing.T, s store.Store) {
 	// Every v2 capture field must survive a round trip. Backends added their
 	// own columns for these historically; forgetting to persist Logs or
 	// PanicStack is a real regression, hence the explicit contract.
+	requestBody, responseBody := `{"name":"gopher"}`, `{"id":1}`
 	rich := &store.RequestLog{
 		ID:         "rich-1",
 		Timestamp:  time.Now(),
@@ -77,7 +78,11 @@ func Run(t *testing.T, s store.Store) {
 			RequestID:  "rich-1",
 			Duration:   42 * time.Millisecond,
 			SQLQueries: []store.SQLQuery{{Query: "SELECT 1", Duration: time.Millisecond, Rows: 1}},
-			HTTPCalls:  []store.HTTPCall{{Method: "GET", URL: "http://x", Duration: time.Millisecond, Status: 200}},
+			HTTPCalls: []store.HTTPCall{{
+				Method: "POST", URL: "http://x", Duration: time.Millisecond, Status: 200,
+				RequestBody: &requestBody, ResponseBody: &responseBody,
+				RequestBodyTruncated: true, ResponseBodyTruncated: true,
+			}},
 		},
 	}
 	if err := s.Add(rich); err != nil {
@@ -103,6 +108,14 @@ func Run(t *testing.T, s store.Store) {
 		len(back.PerformanceMetrics.SQLQueries) != 1 ||
 		len(back.PerformanceMetrics.HTTPCalls) != 1 {
 		t.Errorf("PerformanceMetrics dropped or trimmed: %+v", back.PerformanceMetrics)
+	}
+	if back.PerformanceMetrics != nil && len(back.PerformanceMetrics.HTTPCalls) == 1 {
+		call := back.PerformanceMetrics.HTTPCalls[0]
+		if call.RequestBody == nil || *call.RequestBody != requestBody ||
+			call.ResponseBody == nil || *call.ResponseBody != responseBody ||
+			!call.RequestBodyTruncated || !call.ResponseBodyTruncated {
+			t.Errorf("outbound bodies dropped by store round trip: %+v", call)
+		}
 	}
 	if err := s.Clear(); err != nil {
 		t.Errorf("Clear after rich: %v", err)

@@ -135,6 +135,22 @@ client := &http.Client{Transport: govisual.WrapTransport(nil)}
 resp, err := client.Do(req.WithContext(r.Context()))
 ```
 
+To inspect outbound request and response bodies in **Trace → HTTP calls**,
+opt in on the transport (profiling must also be enabled on `Wrap`):
+
+```go
+client := &http.Client{Transport: govisual.WrapTransport(nil,
+    govisual.WithTransportBodyLogging(true),
+    govisual.WithTransportMaxBodyBytes(64 << 10), // optional; default 1 MiB per body
+)}
+```
+
+Bodies are captured as the transport/caller reads them; read or close the
+response before returning from the handler to retain the capture. Streaming
+responses are not eagerly consumed. The limit truncates only the recorded
+copy, and the dashboard labels truncated bodies. Body capture is off by
+default and may include sensitive application data when enabled.
+
 ### Application logs (slog)
 
 Wrap your `slog.Handler`. Every record logged with the request's context also lands on that request's Logs tab, capped at 200 lines per request.

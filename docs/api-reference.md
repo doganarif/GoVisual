@@ -413,7 +413,7 @@ db, err := sql.Open("postgres+viz", dsn)
 ### `WrapTransport`
 
 ```go
-func WrapTransport(rt http.RoundTripper) http.RoundTripper
+func WrapTransport(rt http.RoundTripper, opts ...TransportOption) http.RoundTripper
 ```
 
 Instruments an `http.RoundTripper` so outbound HTTP calls made while handling a request appear on that request's profile. A nil `rt` wraps `http.DefaultTransport`. Requires `WithProfiling(true)` and outbound requests must carry the incoming request's context.
@@ -426,6 +426,30 @@ client := &http.Client{
 }
 resp, err := client.Do(req.WithContext(r.Context()))
 ```
+
+Transport options (independent of the inbound `Wrap` options):
+
+- `WithTransportBodyLogging(true)` captures both outbound request and response bodies. Off by default; payloads may contain sensitive application data.
+- `WithTransportMaxBodyBytes(n)` caps each captured body at `n` bytes. The default is 1 MiB; zero or negative values restore that default. The actual HTTP body is always passed through in full.
+
+```go
+client := &http.Client{Transport: govisual.WrapTransport(nil,
+    govisual.WithTransportBodyLogging(true),
+    govisual.WithTransportMaxBodyBytes(64 << 10),
+)}
+```
+
+Expand an HTTP call in the dashboard's Trace tab to view its bodies. Captures
+are populated when the request/response stream reaches EOF or is closed;
+read or close the response before returning from the inbound handler. No
+body is eagerly read, so streaming responses still return headers promptly.
+Only consumed bytes are captured. Protocol upgrade response bodies are left
+untouched to preserve their bidirectional stream.
+
+The `http_calls` JSON entries gain optional `request_body`, `response_body`,
+`request_body_truncated`, and `response_body_truncated` fields. An empty
+captured body is `""`; disabled capture omits the body fields. Truncation
+flags describe the recorded copy and do not alter the payload.
 
 ---
 

@@ -6,6 +6,7 @@ import {
   api,
   ApiError,
   PerformanceMetrics,
+  HTTPCall,
   FlameGraphNode,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -522,17 +523,55 @@ function Body({ request }: { request: RequestLog }) {
   );
 }
 
-function BodyCard({ title, body }: { title: string; body?: string }) {
+function BodyCard({ title, body, truncated }: { title: string; body?: string; truncated?: boolean }) {
   return (
-    <section class="border border-zinc-200 rounded-lg">
+    <section class="border border-zinc-200 rounded-lg text-zinc-900">
       <header class="px-4 py-2.5 border-b border-zinc-200 flex items-center justify-between">
         <h3 class="text-sm font-medium">{title}</h3>
-        <span class="text-[11px] text-zinc-500">{body?.length || 0} bytes</span>
+        <span class="text-[11px] text-zinc-500">
+          {new TextEncoder().encode(body || "").length} bytes{truncated && " · truncated"}
+        </span>
       </header>
       <pre class="p-4 text-xs font-mono overflow-auto max-h-96 bg-zinc-50/50 rounded-b-lg whitespace-pre-wrap break-all">
         {formatBody(body)}
       </pre>
     </section>
+  );
+}
+
+function OutboundHTTPCall({ call }: { call: HTTPCall }) {
+  const hasBodies = call.request_body !== undefined || call.response_body !== undefined;
+  const summary = (
+    <Fragment>
+      <span class="font-mono truncate min-w-0" title={call.url}>
+        <span class="text-blue-700 font-semibold mr-2">{call.method}</span>
+        {call.url}
+      </span>
+      <span class="text-zinc-500 font-mono shrink-0 ml-auto pl-2">
+        {call.status} · {formatDurationNs(call.duration)}
+      </span>
+    </Fragment>
+  );
+  if (!hasBodies) {
+    return <div class="px-4 py-2 text-xs flex items-center justify-between">{summary}</div>;
+  }
+  return (
+    <details class="group text-zinc-900">
+      <summary class="px-4 py-2 text-xs flex items-center gap-2 cursor-pointer hover:bg-zinc-50">
+        <svg class="w-3 h-3 shrink-0 text-zinc-500 group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+        {summary}
+      </summary>
+      <div class="px-4 pb-4 pt-2 space-y-3">
+        {call.request_body !== undefined && (
+          <BodyCard title="Request body" body={call.request_body} truncated={call.request_body_truncated} />
+        )}
+        {call.response_body !== undefined && (
+          <BodyCard title="Response body" body={call.response_body} truncated={call.response_body_truncated} />
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -590,15 +629,7 @@ function Trace({
           </header>
           <div class="divide-y divide-zinc-100">
             {http.slice(0, 10).map((c, i) => (
-              <div key={i} class="px-4 py-2 text-xs flex items-center justify-between">
-                <span class="font-mono truncate">
-                  <span class="text-blue-700 font-semibold mr-2">{c.method}</span>
-                  {c.url}
-                </span>
-                <span class="text-zinc-500 font-mono shrink-0 ml-2">
-                  {c.status} · {formatDurationNs(c.duration)}
-                </span>
-              </div>
+              <OutboundHTTPCall key={i} call={c} />
             ))}
           </div>
         </section>

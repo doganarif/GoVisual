@@ -70,11 +70,15 @@ type SQLQuery struct {
 
 // HTTPCall is a single captured outbound HTTP call.
 type HTTPCall struct {
-	Method   string        `json:"method"`
-	URL      string        `json:"url"`
-	Duration time.Duration `json:"duration"`
-	Status   int           `json:"status"`
-	Size     int64         `json:"size"`
+	Method                string        `json:"method"`
+	URL                   string        `json:"url"`
+	Duration              time.Duration `json:"duration"`
+	Status                int           `json:"status"`
+	Size                  int64         `json:"size"`
+	RequestBody           *string       `json:"request_body,omitempty"`
+	ResponseBody          *string       `json:"response_body,omitempty"`
+	RequestBodyTruncated  bool          `json:"request_body_truncated,omitempty"`
+	ResponseBodyTruncated bool          `json:"response_body_truncated,omitempty"`
 }
 
 // Bottleneck is a performance problem detected on a request.

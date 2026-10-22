@@ -75,11 +75,15 @@ type SQLQueryMetric struct {
 
 // HTTPCallMetric represents metrics for an HTTP call
 type HTTPCallMetric struct {
-	Method   string        `json:"method"`
-	URL      string        `json:"url"`
-	Duration time.Duration `json:"duration"`
-	Status   int           `json:"status"`
-	Size     int64         `json:"size"`
+	Method                string        `json:"method"`
+	URL                   string        `json:"url"`
+	Duration              time.Duration `json:"duration"`
+	Status                int           `json:"status"`
+	Size                  int64         `json:"size"`
+	RequestBody           *string       `json:"request_body,omitempty"`
+	ResponseBody          *string       `json:"response_body,omitempty"`
+	RequestBodyTruncated  bool          `json:"request_body_truncated,omitempty"`
+	ResponseBodyTruncated bool          `json:"response_body_truncated,omitempty"`
 }
 
 // Bottleneck represents a performance bottleneck
@@ -431,23 +435,60 @@ func (p *Profiler) RecordHTTPCall(ctx context.Context, method, url string, durat
 // by ctx. Without an active profile it is a no-op, so it is safe to call
 // unconditionally — this is what the WrapTransport instrumentation uses.
 func RecordHTTP(ctx context.Context, method, url string, duration time.Duration, status int, size int64) {
+	if call := BeginHTTPCall(ctx, method, url); call != nil {
+		call.Complete(duration, status, size)
+	}
+}
+
+// HTTPCallRecorder updates one outbound call under the profile's lock. Body
+// readers can finish after RoundTrip returns, or concurrently with snapshots.
+type HTTPCallRecorder struct {
+	metrics *Metrics
+	index   int
+	sink    TracerSink
+}
+
+// BeginHTTPCall reserves a call in the active request profile. Nil means
+// there is no profile, so transports can skip body capture entirely.
+func BeginHTTPCall(ctx context.Context, method, url string) *HTTPCallRecorder {
 	metrics, ok := ctx.Value(profileContextKey{}).(*Metrics)
 	if !ok || metrics == nil {
-		return
+		return nil
 	}
 
 	metrics.mu.Lock()
+	index := len(metrics.HTTPCalls)
 	metrics.HTTPCalls = append(metrics.HTTPCalls, HTTPCallMetric{
-		Method:   method,
-		URL:      url,
-		Duration: duration,
-		Status:   status,
-		Size:     size,
+		Method: method,
+		URL:    url,
 	})
 	metrics.mu.Unlock()
+	return &HTTPCallRecorder{metrics: metrics, index: index, sink: tracerSinkFromContext(ctx)}
+}
 
-	if sink := tracerSinkFromContext(ctx); sink != nil {
-		sink.RecordHTTP(method, url, duration, status, nil)
+// Complete records the response metadata without waiting for its body.
+func (r *HTTPCallRecorder) Complete(duration time.Duration, status int, size int64) {
+	r.metrics.mu.Lock()
+	call := &r.metrics.HTTPCalls[r.index]
+	call.Duration, call.Status, call.Size = duration, status, size
+	method, url := call.Method, call.URL
+	r.metrics.mu.Unlock()
+	if r.sink != nil {
+		r.sink.RecordHTTP(method, url, duration, status, nil)
+	}
+}
+
+// SetBody replaces an immutable body snapshot; previously returned metrics
+// and persisted models remain unchanged. A non-nil empty string distinguishes
+// an enabled but empty body from disabled capture.
+func (r *HTTPCallRecorder) SetBody(request bool, body string, truncated bool) {
+	r.metrics.mu.Lock()
+	defer r.metrics.mu.Unlock()
+	call := &r.metrics.HTTPCalls[r.index]
+	if request {
+		call.RequestBody, call.RequestBodyTruncated = &body, truncated
+	} else {
+		call.ResponseBody, call.ResponseBodyTruncated = &body, truncated
 	}
 }
 
