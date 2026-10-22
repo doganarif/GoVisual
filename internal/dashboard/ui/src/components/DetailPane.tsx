@@ -1,11 +1,13 @@
 import { h, Fragment } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import * as Tabs from "@radix-ui/react-tabs";
 import {
   RequestLog,
   LogEntry,
   api,
   ApiError,
   PerformanceMetrics,
+  HTTPCall,
   FlameGraphNode,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -487,20 +489,22 @@ function Headers({ request }: { request: RequestLog }) {
 function HeadersCard({
   title,
   headers,
+  compact = false,
 }: {
   title: string;
   headers?: Record<string, string[]>;
+  compact?: boolean;
 }) {
   const entries = Object.entries(headers || {});
   return (
-    <section class="border border-zinc-200 rounded-lg">
+    <section class="border border-zinc-200 rounded-lg text-zinc-900">
       <header class="px-4 py-2.5 border-b border-zinc-200">
         <h3 class="text-sm font-medium">{title}</h3>
       </header>
       {entries.length === 0 ? (
         <div class="px-4 py-3 text-xs text-zinc-500">No headers</div>
       ) : (
-        <div class="divide-y divide-zinc-100">
+        <div class={cn("divide-y divide-zinc-100", compact && "max-h-64 overflow-auto")}>
           {entries.map(([k, values]) => (
             <div key={k} class="grid grid-cols-[180px_1fr] gap-3 px-4 py-2 text-xs font-mono">
               <div class="text-zinc-500 truncate" title={k}>{k}</div>
@@ -522,17 +526,78 @@ function Body({ request }: { request: RequestLog }) {
   );
 }
 
-function BodyCard({ title, body }: { title: string; body?: string }) {
+function BodyCard({ title, body, truncated, compact = false }: { title: string; body?: string; truncated?: boolean; compact?: boolean }) {
   return (
-    <section class="border border-zinc-200 rounded-lg">
+    <section class="border border-zinc-200 rounded-lg text-zinc-900">
       <header class="px-4 py-2.5 border-b border-zinc-200 flex items-center justify-between">
         <h3 class="text-sm font-medium">{title}</h3>
-        <span class="text-[11px] text-zinc-500">{body?.length || 0} bytes</span>
+        <span class="text-[11px] text-zinc-500">
+          {new TextEncoder().encode(body || "").length} bytes{truncated && " · truncated"}
+        </span>
       </header>
-      <pre class="p-4 text-xs font-mono overflow-auto max-h-96 bg-zinc-50/50 rounded-b-lg whitespace-pre-wrap break-all">
+      <pre class={cn("p-4 text-xs font-mono overflow-auto bg-zinc-50/50 rounded-b-lg whitespace-pre-wrap break-all", compact ? "max-h-64" : "max-h-96")}>
         {formatBody(body)}
       </pre>
     </section>
+  );
+}
+
+function OutboundHTTPCall({ call }: { call: HTTPCall }) {
+  const panels = [
+    { id: "request-headers", label: "Request headers", available: call.request_headers !== undefined },
+    { id: "response-headers", label: "Response headers", available: call.response_headers !== undefined },
+    { id: "request-body", label: "Request body", available: call.request_body !== undefined },
+    { id: "response-body", label: "Response body", available: call.response_body !== undefined },
+  ].filter((panel) => panel.available);
+  const [selected, setSelected] = useState("");
+  const active = panels.some((panel) => panel.id === selected) ? selected : panels[0]?.id;
+  const summary = (
+    <Fragment>
+      <span class="font-mono truncate min-w-0" title={call.url}>
+        <span class="text-blue-700 font-semibold mr-2">{call.method}</span>
+        {call.url}
+      </span>
+      <span class="text-zinc-500 font-mono shrink-0 ml-auto pl-2">
+        {call.status} · {formatDurationNs(call.duration)}
+      </span>
+    </Fragment>
+  );
+  if (panels.length === 0) {
+    return <div class="px-4 py-2 text-xs flex items-center justify-between">{summary}</div>;
+  }
+  return (
+    <details class="group text-zinc-900">
+      <summary class="px-4 py-2 text-xs flex items-center gap-2 cursor-pointer hover:bg-zinc-50">
+        <svg class="w-3 h-3 shrink-0 text-zinc-500 group-open:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="m9 6 6 6-6 6" />
+        </svg>
+        {summary}
+      </summary>
+      <Tabs.Root value={active} onValueChange={setSelected} className="px-4 pb-4">
+        <Tabs.List aria-label="Outbound HTTP call details" className="flex overflow-x-auto border-b border-zinc-200 mb-3">
+          {panels.map((panel) => (
+            <Tabs.Trigger key={panel.id} value={panel.id} className={cn(
+              "px-3 py-2 text-xs whitespace-nowrap border-b-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:-outline-offset-2",
+              active === panel.id ? "border-zinc-900 text-zinc-900 font-medium" : "border-transparent text-zinc-500 hover:text-zinc-900",
+            )}>
+              {panel.label}
+            </Tabs.Trigger>
+          ))}
+        </Tabs.List>
+        {call.request_headers !== undefined && (
+          <Tabs.Content value="request-headers"><HeadersCard title="Request headers" headers={call.request_headers} compact /></Tabs.Content>
+        )}
+        {call.response_headers !== undefined && (
+          <Tabs.Content value="response-headers"><HeadersCard title="Response headers" headers={call.response_headers} compact /></Tabs.Content>
+        )}
+        {call.request_body !== undefined && (
+          <Tabs.Content value="request-body"><BodyCard title="Request body" body={call.request_body} truncated={call.request_body_truncated} compact /></Tabs.Content>
+        )}
+        {call.response_body !== undefined && (
+          <Tabs.Content value="response-body"><BodyCard title="Response body" body={call.response_body} truncated={call.response_body_truncated} compact /></Tabs.Content>
+        )}
+      </Tabs.Root>
+    </details>
   );
 }
 
@@ -590,15 +655,7 @@ function Trace({
           </header>
           <div class="divide-y divide-zinc-100">
             {http.slice(0, 10).map((c, i) => (
-              <div key={i} class="px-4 py-2 text-xs flex items-center justify-between">
-                <span class="font-mono truncate">
-                  <span class="text-blue-700 font-semibold mr-2">{c.method}</span>
-                  {c.url}
-                </span>
-                <span class="text-zinc-500 font-mono shrink-0 ml-2">
-                  {c.status} · {formatDurationNs(c.duration)}
-                </span>
-              </div>
+              <OutboundHTTPCall key={i} call={c} />
             ))}
           </div>
         </section>

@@ -413,7 +413,7 @@ db, err := sql.Open("postgres+viz", dsn)
 ### `WrapTransport`
 
 ```go
-func WrapTransport(rt http.RoundTripper) http.RoundTripper
+func WrapTransport(rt http.RoundTripper, opts ...TransportOption) http.RoundTripper
 ```
 
 Instruments an `http.RoundTripper` so outbound HTTP calls made while handling a request appear on that request's profile. A nil `rt` wraps `http.DefaultTransport`. Requires `WithProfiling(true)` and outbound requests must carry the incoming request's context.
@@ -426,6 +426,42 @@ client := &http.Client{
 }
 resp, err := client.Do(req.WithContext(r.Context()))
 ```
+
+Transport options (independent of the inbound `Wrap` options):
+
+- `WithTransportBodyLogging(true)` captures both outbound request and response bodies. Off by default; payloads may contain sensitive application data.
+- `WithTransportMaxBodyBytes(n)` caps each captured body at `n` bytes. The default is 1 MiB; zero or negative values restore that default. The actual HTTP body is always passed through in full.
+
+```go
+client := &http.Client{Transport: govisual.WrapTransport(nil,
+    govisual.WithTransportBodyLogging(true),
+    govisual.WithTransportMaxBodyBytes(64 << 10),
+)}
+```
+
+Request and response headers are captured automatically for profiled calls,
+with the same credential redaction as inbound captures (`Authorization`,
+`Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, and
+`X-Csrf-Token`). Capture makes defensive copies and does not modify the headers
+sent to the server or returned to the caller. Request headers reflect
+`req.Header` at the `WrapTransport` boundary, so headers added by the underlying
+transport are not included.
+
+Expand an HTTP call in the dashboard's Trace tab and switch between request
+headers, response headers, request body, and response body. Only one panel is
+shown at a time, with long content scrolling inside the panel. Body captures
+are populated when the request/response stream reaches EOF or is closed;
+read or close the response before returning from the inbound handler. No
+body is eagerly read, so streaming responses still return headers promptly.
+Only consumed bytes are captured. Protocol upgrade response bodies are left
+untouched to preserve their bidirectional stream.
+
+The `http_calls` JSON entries include optional `request_headers` and
+`response_headers` objects mapping names to arrays of values. Empty header
+maps are omitted. They also gain optional `request_body`, `response_body`,
+`request_body_truncated`, and `response_body_truncated` fields. An empty
+captured body is `""`; disabled capture omits the body fields. Truncation
+flags describe the recorded copy and do not alter the payload.
 
 ---
 

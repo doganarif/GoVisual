@@ -70,11 +70,17 @@ type SQLQuery struct {
 
 // HTTPCall is a single captured outbound HTTP call.
 type HTTPCall struct {
-	Method   string        `json:"method"`
-	URL      string        `json:"url"`
-	Duration time.Duration `json:"duration"`
-	Status   int           `json:"status"`
-	Size     int64         `json:"size"`
+	Method                string        `json:"method"`
+	URL                   string        `json:"url"`
+	Duration              time.Duration `json:"duration"`
+	Status                int           `json:"status"`
+	Size                  int64         `json:"size"`
+	RequestHeaders        http.Header   `json:"request_headers,omitempty"`
+	ResponseHeaders       http.Header   `json:"response_headers,omitempty"`
+	RequestBody           *string       `json:"request_body,omitempty"`
+	ResponseBody          *string       `json:"response_body,omitempty"`
+	RequestBodyTruncated  bool          `json:"request_body_truncated,omitempty"`
+	ResponseBodyTruncated bool          `json:"response_body_truncated,omitempty"`
 }
 
 // Bottleneck is a performance problem detected on a request.
@@ -95,7 +101,7 @@ func NewRequestLog(req *http.Request) *RequestLog {
 		Path:           req.URL.Path,
 		RawPath:        req.URL.RawPath,
 		Query:          req.URL.RawQuery,
-		RequestHeaders: scrubHeaders(req.Header),
+		RequestHeaders: ScrubHeaders(req.Header),
 	}
 }
 
@@ -104,7 +110,7 @@ func NewRequestLog(req *http.Request) *RequestLog {
 // response headers follow the same policy before a RequestLog can be
 // persisted by any backend.
 func (l *RequestLog) SetResponseHeaders(headers http.Header) {
-	l.ResponseHeaders = scrubHeaders(headers)
+	l.ResponseHeaders = ScrubHeaders(headers)
 }
 
 // sensitiveHeaders are dropped from captured request/response logs. Storing
@@ -121,10 +127,10 @@ var sensitiveHeaders = map[string]struct{}{
 	"X-Csrf-Token":        {},
 }
 
-// scrubHeaders returns a copy of h with credential-bearing header values
+// ScrubHeaders returns a defensive copy of h with credential-bearing header values
 // replaced by a fixed marker. The header *name* is kept so consumers can see
 // that auth was present; only the value is hidden.
-func scrubHeaders(h http.Header) http.Header {
+func ScrubHeaders(h http.Header) http.Header {
 	if h == nil {
 		return nil
 	}

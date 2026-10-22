@@ -57,6 +57,12 @@ export interface HTTPCall {
   duration: number;
   status: number;
   size: number;
+  request_headers?: Record<string, string[]>;
+  response_headers?: Record<string, string[]>;
+  request_body?: string;
+  response_body?: string;
+  request_body_truncated?: boolean;
+  response_body_truncated?: boolean;
 }
 
 export interface Bottleneck {
